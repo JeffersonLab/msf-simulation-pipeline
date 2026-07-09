@@ -1,17 +1,19 @@
-# config-msf-26-07-background.yaml  (meson-structure + ePIC background cocktails)
-# Translated from meson-structure/full-sim-pipeline/config-campaign-26-07-background.yaml.
+# Meson Structure + ePIC background cocktails — July 2026
 #
-# Chain:  afterburner -> bg_merger (11) -> npsim_background (22)
-#         -> eicrecon -> csv_eicrecon
-extends: [config-base.yaml, config-msf.yaml]
+# Self-contained: this one file is the full record of what ran where.
+# Chain: afterburner -> bg_merger (11) -> npsim_background (22)
+#        -> eicrecon -> csv_eicrecon
 
 base_dir: "/work/eic3/users/romanov/meson-structure-2026-07"
+
+# Container image and directories bound inside it
 container: "/work/eic3/users/romanov/meson-structure-work/eicdev-eic-full-2026-06-01.sif"
 bind_dirs:
   - "${base_dir}"
   - "/volatile/eic/EPIC/EVGEN/BACKGROUNDS"
 
-# Turn root://host//abs/path background sources into local /abs/path (bind-mounted).
+# Cocktail sources are root://host//abs/path URLs; on this farm the same files
+# are mounted locally, so strip the xrootd prefix and read them directly.
 strip_xrootd_prefix: true
 
 energies:
@@ -20,9 +22,16 @@ energies:
   - "9x130"
   - "9x275"
 
+# Events per job (bg_merger: number of 2us frames, one signal event per frame)
 event_count: 1000
 
-# --- background cocktails (stages 11 + 22) -----------------------------------
+# generate_datasets writes cards under <datasets_dir>/<stage>/
+datasets_dir: "${base_dir}/datasets"
+
+# Files per SLURM array task in the CSV stages
+slurm_files_per_job: 20
+
+# ---- background cocktails (stages 11 + 22) ------------------------------------
 background_config_dir: "/work/eic3/users/romanov/meson-structure-work/meson-structure/eic_official_campaign_info/config_data"
 background_configs:
   "5x41":  "synrad_egasbrems_egascoulomb_egastouschek_hgas_5GeVx41GeV_vacuum_10000Ahr_machineruntime_50s.json"
@@ -30,10 +39,35 @@ background_configs:
   "9x130": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx130GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
   "9x275": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx275GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
 
-# Background npsim output feeds eicrecon (override the default npsim.output source).
-eicrecon:
-  input:  "${npsim_background.output}"
-  output: "${base_dir}/reco-background/${energy}"
+# ---- stages ------------------------------------------------------------------
 
-csv_eicrecon:
-  output: "${base_dir}/csv-reco-background/${energy}"
+afterburner:                                        # 10_create_afterburner_jobs.py
+  input:   "${base_dir}/eg-hepmc/${energy}-priority"
+  pattern: "*.hepmc"
+  output:  "${base_dir}/afterburner/${energy}-priority"
+
+bg_merger:                                          # 11_create_background_jobs.py
+  input:   "${afterburner.output}"
+  pattern: "*.hepmc3.tree.root"
+  output:  "${base_dir}/bg_merged/${energy}"
+
+npsim_background:                                   # 22_create_npsim_background_jobs.py
+  input:   "${bg_merger.output}"
+  pattern: "*.bg.hepmc3.tree.root"
+  output:  "${base_dir}/dd4hep-background/${energy}"
+
+eicrecon:                                           # 30_create_eicrecon_jobs.py
+  input:   "${npsim_background.output}"
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/reco-background/${energy}"
+
+csv_eicrecon:                                       # 40_csv_convert.py csv_eicrecon
+  input:   "${eicrecon.output}"
+  pattern: "*.edm4eic.root"
+  output:  "${base_dir}/csv-reco-background/${energy}"
+  macros:
+    - edm4eic_mc_dis
+    - edm4eic_reco_dis
+    - edm4eic_mcpart_lambda
+    - edm4eic_reco_ff_lambda
+    - edm4eic_reco_particles

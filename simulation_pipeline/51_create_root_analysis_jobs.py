@@ -19,7 +19,7 @@ import textwrap
 import datetime
 import yaml
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from simulation_pipeline.job_creator import load_config, load_config_for_energy, find_input_files
 
 this_dir = os.path.dirname(os.path.abspath(__file__))

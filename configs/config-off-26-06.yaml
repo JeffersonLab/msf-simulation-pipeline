@@ -1,9 +1,15 @@
-# config-off-26-06.yaml  (official DIS NC campaign, June 2026)
-# Translated from ai-epic-background/full-sim-pipeline/dis-data-26-06.yaml.
-# csv_eicrecon cards come from rucio:  generate_datasets csv_eicrecon --rucio -c this.yaml
-extends: [config-base.yaml, config-off.yaml]
+# Official DIS NC campaign — June 2026
+#
+# Self-contained: this one file is the full record of what ran where.
+# The RECO files already live on the grid, so the local sim chain is skipped:
+# cards are produced from rucio and go straight into the CSV stage.
+#
+#   generate_datasets csv_eicrecon --rucio -c this.yaml
+#   python 40_csv_convert.py csv_eicrecon -c this.yaml
 
 base_dir: "/work/eic3/users/romanov/dis-csv-2026-06"
+
+# Container image and directories bound inside it
 container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.06.0-stable"
 bind_dirs:
   - "${base_dir}"
@@ -15,10 +21,27 @@ energies:
   - "9x130"
   - "9x275"
 
+# Events per job
 event_count: 5000
 
-# --- rucio card producer -----------------------------------------------------
+# generate_datasets writes cards under <datasets_dir>/<stage>/
+datasets_dir: "${base_dir}/datasets"
+
+# Files per SLURM array task in the CSV stages
+slurm_files_per_job: 20
+
+# ---- rucio card discovery (generate_datasets --rucio) -------------------------
 rucio_did_filters: ""
 rucio_did_pattern: "epic:/RECO/26.06.0/epic_craterlake/DIS/pythia8.316-1.0/NC/noRad/ep/*"
-slug_drop_tokens: ["pythia8.316-1.0", "noRad"]
-max_files_per_dataset: 0
+max_files_per_dataset: 0        # 0 = all files
+
+# ---- stages ------------------------------------------------------------------
+
+csv_eicrecon:                                       # 40_csv_convert.py csv_eicrecon
+  # Cards come from rucio (files are root:// PFNs, streamed — no local copy).
+  # Outputs land under <output>/<dataset-slug>/.
+  output: "${base_dir}/csv_eicrecon"
+  macros:
+    - edm4eic_trk_hits
+    - edm4eic_mc_particles
+    - edm4eic_reco_particles

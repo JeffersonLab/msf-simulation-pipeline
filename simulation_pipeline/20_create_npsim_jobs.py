@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-21_create_npsim_saveall_jobs.py
+20_create_npsim_jobs.py
 
-npsim variant with an empty user particle handler (save-all). Reads the
-'npsim_saveall' dataset cards (`generate_datasets npsim_saveall -c <config>`).
+Generate npsim (dd4hep) jobs. Reads the 'npsim' dataset cards
+(`generate_datasets npsim -c <config>`) and runs npsim on each afterburned
+*.hepmc3.tree.root with the standard EIC tracking-volume particle handler.
 """
 
 import os
 import sys
 import textwrap
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from simulation_pipeline.job_creator import JobCreator, exension_replacer
 from simulation_pipeline.datasets import run_card_pipeline
 
-STAGE = "npsim_saveall"
+STAGE = "npsim"
 
 
 def create_container_script_template():
@@ -36,7 +37,7 @@ def create_container_script_template():
     if [ -f "/opt/detector/epic-main/bin/thisepic.sh" ]; then
         source /opt/detector/epic-main/bin/thisepic.sh
     fi
-    /usr/bin/time -v npsim --part.userParticleHandler="" --compactFile=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml --runType run --inputFiles {input_file} --outputFile {output_file} --numberOfEvents {events} 2>&1
+    /usr/bin/time -v npsim --part.userParticleHandler="Geant4TVUserParticleHandler" --compactFile=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml --runType run --inputFiles {input_file} --outputFile {output_file} --numberOfEvents {events} 2>&1
 
     echo ""
     echo "=========================================================================="
@@ -63,4 +64,4 @@ def build(config, card, config_path):
 
 
 if __name__ == "__main__":
-    run_card_pipeline(STAGE, build, description="Generate npsim (save-all) jobs.")
+    run_card_pipeline(STAGE, build, description="Generate npsim jobs.")

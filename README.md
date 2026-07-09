@@ -16,18 +16,18 @@ it reads cards. Cards are produced two ways, but stages don't care which:
 ```
 01/02 gen->hepmc (dir/file, not cards)
    │
-   ▼   generate_datasets afterburner -c cfg      ->  datasets/afterburner/*.yaml
-   ▼   python .../stages/10_create_afterburner_jobs.py -c cfg
-   ▼   generate_datasets npsim -c cfg            ->  datasets/npsim/*.yaml
-   ▼   python .../stages/20_create_npsim_jobs.py -c cfg
+   ▼   generate_datasets afterburner -c cfg   ->  datasets/afterburner/*.yaml
+   ▼   python 10_create_afterburner_jobs.py -c cfg
+   ▼   generate_datasets npsim -c cfg         ->  datasets/npsim/*.yaml
+   ▼   python 20_create_npsim_jobs.py -c cfg
    ▼   ... eicrecon ... csv ...
 ```
 
 Official campaigns skip the local chain — their RECO is already on rucio:
 
 ```
-generate_datasets csv_eicrecon --rucio -c config-off-26-06.yaml
-python .../stages/41_create_csv_eicrecon_jobs.py -c config-off-26-06.yaml
+generate_datasets csv_eicrecon --rucio -c configs/config-off-26-06.yaml
+python simulation_pipeline/40_csv_convert.py csv_eicrecon -c configs/config-off-26-06.yaml
 ```
 
 ## Dry-render / inspect (no farm, no real files)
@@ -39,7 +39,7 @@ just read the emitted bash. Mint a card from a fake file list:
 ```
 generate_datasets csv_eicrecon -c cfg.yaml --energy 9x130 \
     --files /any/path/msf_9x130_0001.edm4eic.root /any/path/msf_9x130_0002.edm4eic.root
-python .../stages/41_create_csv_eicrecon_jobs.py -c cfg.yaml
+python simulation_pipeline/40_csv_convert.py csv_eicrecon -c cfg.yaml
 # then inspect:
 cat <output>/csv-reco/9x130/jobs/*.container.sh     # per-file container script
 cat <output>/csv-reco/9x130/jobs/array.slurm.sh     # SLURM job-array wrapper
@@ -52,48 +52,57 @@ paths; nothing needs to exist.
 
 ## Layout
 
+Everything lives flat in one package directory — open a stage script and the
+engine/card code is right next to it:
+
 ```
-simulation_pipeline/          importable package (`pip install -e .`)
-  job_creator.py              the job-generation engine (SLURM arrays + local)
-  generate_datasets.py        universal card producer (local glob + --rucio)
+simulation_pipeline/
+  NN_*.py                     stage job generators (run as scripts)
+  40_csv_convert.py           ONE csv script for all csv stages (see below)
+  generate_datasets.py        universal card producer (local glob / --rucio / --files)
   datasets.py                 card schema, config loader, run_card_pipeline
+  job_creator.py              the job-generation engine (SLURM arrays + local)
   rucio.py                    rucio discovery (official campaigns)
-  csv_stage.py                shared CSV-stage builder (config-driven macros)
-  stages/                     NN_create_*_jobs.py  (run as scripts)
 csv_convert/                  ROOT converter macros, edm4hep_* / edm4eic_*
-configs/                      config-base + config-msf/off + per-campaign
+configs/                      one self-contained YAML per campaign
 scripts/                      collect_job_stats.py, eg_*.sh helpers
 ```
 
-## Configs
+## Configs — one campaign, one file
 
-Campaign configs layer via an `extends:` list (base -> family -> campaign):
+Each campaign config is **fully self-contained**: open it and you see the whole
+picture — where inputs were, where every stage wrote, which macros ran. No
+inheritance, no base files. Each stage is a top-level block:
 
 ```yaml
-extends: [config-base.yaml, config-msf.yaml]
-base_dir: "/work/eic3/users/romanov/meson-structure-2026-07"
-energies: ["5x41", "9x100", "9x130", "9x275"]
+afterburner:
+  input:   "${base_dir}/eg-hepmc/${energy}-priority"
+  pattern: "*.hepmc"
+  output:  "${base_dir}/afterburner/${energy}-priority"
+npsim:
+  input:   "${afterburner.output}"          # stages chain by interpolation
+  pattern: "*.hepmc3.tree.root"
+  output:  "${base_dir}/dd4hep/${energy}"
 ```
-
-Each stage is a flat top-level block (`afterburner`, `npsim`, `eicrecon`,
-`csv_eicrecon`, ...) with `input` / `pattern` / `output`; stages chain via
-`${<stage>.output}`. The CSV stages also carry a config-driven `macros:` list
-and a `stem:` (`basename` or `file_index`).
 
 ## Stages
 
-| # | script | stage key | reads |
-|---|---|---|---|
-| 01/02 | gen->hepmc converters | — (pre-card) | generator ROOT |
-| 10 | afterburner | `afterburner` | `*.hepmc` |
-| 11 | background merge | `bg_merger` | `*.hepmc3.tree.root` |
-| 20 | npsim | `npsim` | `*.hepmc3.tree.root` |
-| 21 | npsim save-all | `npsim_saveall` | `*.hepmc3.tree.root` |
-| 22 | npsim (bg-merged) | `npsim_background` | `*.bg.hepmc3.tree.root` |
-| 30 | eicrecon | `eicrecon` | `*.edm4hep.root` |
-| 40 | csv (edm4hep) | `csv_dd4hep` | `*.edm4hep.root` |
-| 41 | csv (edm4eic) | `csv_eicrecon` | `*.edm4eic.root` |
-| 50/51 | analysis | — (directory-based) | csv |
+| script | stage key (config block) | reads |
+|---|---|---|
+| `01/02_root_hepmc_*_convert.py` | — (pre-card) | generator ROOT |
+| `10_create_afterburner_jobs.py` | `afterburner` | `*.hepmc` |
+| `11_create_background_jobs.py` | `bg_merger` | `*.hepmc3.tree.root` |
+| `20_create_npsim_jobs.py` | `npsim` | `*.hepmc3.tree.root` |
+| `21_create_npsim_saveall_jobs.py` | `npsim_saveall` | `*.hepmc3.tree.root` |
+| `22_create_npsim_background_jobs.py` | `npsim_background` | `*.bg.hepmc3.tree.root` |
+| `30_create_eicrecon_jobs.py` | `eicrecon` | `*.edm4hep.root` |
+| `40_csv_convert.py <stage>` | any `csv_*` block | `*.edm4hep.root` / `*.edm4eic.root` |
+| `50/51_create_*_analysis_jobs.py` | — (directory-based) | csv |
+
+There is **one** CSV script. Which converters run is entirely the config's
+`macros:` list — `40_csv_convert.py csv_dd4hep` runs the `edm4hep_*` macros the
+config names, `40_csv_convert.py csv_eicrecon` the `edm4eic_*` ones. Output CSVs
+are named `<input-stem>.<role>.csv` (e.g. `msf_9x130_0001.reco_particles.csv`).
 
 > Wiring `meson-structure` / `ai-epic-background` to consume this submodule is a
 > separate, later step; this repo is the shared pipeline itself.

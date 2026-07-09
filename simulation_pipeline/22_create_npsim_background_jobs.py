@@ -19,7 +19,7 @@ import os
 import sys
 import textwrap
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from simulation_pipeline.job_creator import JobCreator, exension_replacer
 from simulation_pipeline.datasets import run_card_pipeline
 

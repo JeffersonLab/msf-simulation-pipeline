@@ -1,10 +1,9 @@
 """Shared EIC full-sim simulation pipeline.
 
-Everything from the afterburner stage onward reads a *dataset card* (a small YAML
-with a ``files:`` array), produced by the universal card producer
-(:mod:`simulation_pipeline.generate_datasets`). The stage job generators live in
-:mod:`simulation_pipeline.stages` and consume those cards; they never glob a
-directory themselves.
+Every stage from the afterburner input onward reads *dataset cards* (small YAML
+files with a ``files:`` array) produced by ``generate_datasets``. The numbered
+``NN_*.py`` scripts in this directory are the stage job generators; run them as
+scripts, e.g. ``python 40_csv_convert.py csv_eicrecon -c config.yaml``.
 """
 
 from .job_creator import JobCreator, exension_replacer, write_top_master_scripts

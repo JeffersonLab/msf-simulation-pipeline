@@ -1,17 +1,20 @@
 """Rucio dataset discovery for official campaigns.
 
-Absorbed from ai-epic-background's ``42_create_datasets_list.py``. Used only by
-``generate_datasets --rucio`` to produce cards for official-campaign files that already
-live on the grid (RECO ``edm4eic`` or FULL ``edm4hep``). Auth is assumed handled
-by the environment; ``rucio`` is invoked inside the campaign container via
+Used only by ``generate_datasets <stage> --rucio`` to produce cards for
+official-campaign files that already live on the grid. Auth is assumed handled
+by the environment; ``rucio`` runs inside the campaign container via
 ``singularity exec`` so the host needs no rucio on PATH.
 
-``discover_datasets(config)`` returns a list of dicts:
+``discover_datasets(config)`` returns one dict per dataset DID matched by the
+campaign's ``rucio_did_pattern`` / ``rucio_did_filters``:
 
-    {did, slug, energy, metadata, rucio_metadata, files: [root://...]}
+    {did, slug, energy, rucio_metadata, files: [root://...]}
 
-one per dataset DID matched by the campaign's ``rucio_did_pattern`` /
-``rucio_did_filters``. :mod:`simulation_pipeline.generate_datasets` turns each into a card.
+Design note: we deliberately parse almost nothing out of DIDs or filenames.
+The one exception is the beam energy — a ``<int>x<int>`` path token (10x100) —
+because cards group per energy. Everything else (generator, process, beam
+effects, ...) is taken verbatim from ``rucio did metadata list``, which is the
+authoritative source; guessing it from filename fragments proved fragile.
 """
 
 import os
@@ -20,18 +23,9 @@ import shlex
 import subprocess
 import sys
 
-ENERGY_RE = re.compile(r"^\d+x\d+$")        # 10x100
-FRAME_LEN_RE = re.compile(r"^\d+us$")       # 2us
-MINQ2_RE = re.compile(r"minQ2=(\S+)")
-Q2_ALT_RE = re.compile(r"q2_(\w+)")
-GEN_RE = re.compile(r"^([A-Za-z]+\d*)")     # pythia8 (from pythia8NCDIS...)
-XANGLE_RE = re.compile(r"xAngle=(-?\d+(?:\.\d+)?)")
-DIV_RE = re.compile(r"(hiDiv|loDiv)(?:_(\d+))?")
-
-DATA_TYPE = {"RECO": "reconstructed", "FULL": "simulated"}
-FRAME_TYPE = {"Exact1S": "1sig-per-fr"}
-PROCESS = {"DIS": "dis", "SIDIS": "sidis"}
-INTERACTION = {"NC": "nc", "CC": "cc"}
+# A beam-energy token in a DID path, e.g. "10x100". This is the only DID
+# content we interpret.
+ENERGY_RE = re.compile(r"^\d+x\d+$")
 
 
 def make_rucio_runner(container, bind_dirs):
@@ -63,6 +57,7 @@ def parse_did_lines(lines):
     dids = []
     for line in lines:
         line = line.strip()
+        # New CLI prints plain DIDs; old CLI prints a '| epic:/... |' table.
         if line.startswith("|"):
             line = line.split("|", 2)[1].strip()
         if line.startswith("epic:/"):
@@ -79,6 +74,7 @@ _META_LINE_RE = re.compile(r"^(\w+):\s*(.*)$")
 
 
 def _convert_meta_value(raw):
+    """Coerce a rucio metadata string value to None / bool / int / float / str."""
     v = raw.strip()
     if v in ("", "None"):
         return None
@@ -95,7 +91,11 @@ def _convert_meta_value(raw):
 
 
 def parse_rucio_metadata(lines, drop_none=True):
-    """Parse ``rucio did metadata list --plugin ALL`` aligned ``key: value`` output."""
+    """Parse ``rucio did metadata list --plugin ALL`` aligned ``key: value`` output.
+
+    Splits on the first ':' only (datetime values keep their colons). None-valued
+    keys are dropped by default to keep the card tidy.
+    """
     meta = {}
     for line in lines:
         m = _META_LINE_RE.match(line.rstrip())
@@ -108,90 +108,32 @@ def parse_rucio_metadata(lines, drop_none=True):
     return meta
 
 
-def fetch_rucio_metadata(run_rucio, did):
-    return parse_rucio_metadata(
-        run_rucio(["did", "metadata", "list", "--plugin", "ALL", did]))
-
-
-def parse_metadata(did, sample_file=None):
-    """Extract structured metadata from a DID (+ a sample filename)."""
-    assert did.startswith("epic:/"), did
-    parts = did[len("epic:/"):].split("/")
-    partition = parts[0]
-    tail = parts[3:]
-
-    meta = {
-        "data_type": DATA_TYPE.get(partition, partition.lower()),
-        "campaign": parts[1] if len(parts) > 1 else None,
-        "detector": parts[2] if len(parts) > 2 else None,
-        "has_background": False,
-    }
-
-    for tok in tail:
-        sub = tok.split("_")
-        if sub[0] == "Bkg":
-            meta["has_background"] = True
-            for s in sub[1:]:
-                if FRAME_LEN_RE.match(s):
-                    meta["frame_len"] = s
-                elif s in FRAME_TYPE:
-                    meta["frame_type"] = FRAME_TYPE[s]
-                else:
-                    meta.setdefault("frame_type", s.lower())
-            break
-
-    if "GoldCt" in tail:
-        i = tail.index("GoldCt")
-        thick = tail[i + 1] if i + 1 < len(tail) else None
-        meta["beampipe"] = "gold-coat" + (f"-{thick}" if thick else "")
-
-    process = next((PROCESS[t] for t in tail if t in PROCESS), None)
-    interaction = next((INTERACTION[t] for t in tail if t in INTERACTION), None)
-    meta["beam_energy"] = next((t for t in tail if ENERGY_RE.match(t)), None)
-
-    m = MINQ2_RE.search(did) or Q2_ALT_RE.search(did)
-    meta["q2"] = f"gt-{m.group(1)}" if m else None
-
-    generator = "pythia8"
-    if sample_file:
-        fn = os.path.basename(sample_file)
-        gm = GEN_RE.match(fn)
-        if gm:
-            generator = gm.group(1).lower()
-        meta["beam_effects"] = "beamEffects" in fn
-        xm = XANGLE_RE.search(fn)
-        if xm:
-            meta["beam_crossing_angle"] = float(xm.group(1))
-        dm = DIV_RE.search(fn)
-        if dm:
-            meta["beam_divergence"] = dm.group(1).lower() + \
-                (f"_{dm.group(2)}" if dm.group(2) else "")
-    meta["generator"] = generator
-
-    if process:
-        bits = [generator] + ([interaction] if interaction else []) + [process]
-        meta["physics"] = "-".join(bits)
-
-    return meta
-
-
-def _rename_token(tok):
-    m = re.fullmatch(r"minQ2=(\S+)", tok)
-    if m:
-        return f"q2-gt-{m.group(1)}"
-    return tok
+def did_energy(did):
+    """The beam-energy token (e.g. '10x100') from a DID path, or None."""
+    for tok in did.split("/"):
+        if ENERGY_RE.match(tok):
+            return tok
+    return None
 
 
 def did_to_slug(did):
-    """Flatten a DID path (after ``epic_craterlake``) into one directory slug."""
+    """Flatten a DID path into one directory-safe slug that mirrors the DID.
+
+    Everything after the detector segment (epic_craterlake) is joined with '_',
+    so it is obvious which dataset a directory came from. 'minQ2=1' becomes
+    'q2-gt-1' ('=' is not directory-safe); any other odd character becomes '_'.
+
+      epic:/RECO/26.06.0/epic_craterlake/DIS/NC/10x100/minQ2=1
+      -> DIS_NC_10x100_q2-gt-1
+    """
     assert did.startswith("epic:/"), did
     parts = did[len("epic:/"):].split("/")
     if "epic_craterlake" in parts:
         tail = parts[parts.index("epic_craterlake") + 1:]
     else:
-        tail = parts[3:]
-    slug = "_".join(_rename_token(t) for t in tail if t)
-    return re.sub(r"[^A-Za-z0-9._-]", "_", slug)
+        tail = parts[3:]  # skip <partition>/<campaign>/<detector>
+    tail = [re.sub(r"^minQ2=(\S+)$", r"q2-gt-\1", t) for t in tail if t]
+    return re.sub(r"[^A-Za-z0-9._-]", "_", "_".join(tail))
 
 
 def discover_datasets(config, max_files=0):
@@ -231,13 +173,12 @@ def discover_datasets(config, max_files=0):
             print(f"      WARN: no PFNs for {did} -- skipping")
             continue
 
-        meta = parse_metadata(did, sample_file=pfns[0])
         datasets.append({
             "did": did,
             "slug": did_to_slug(did),
-            "energy": meta.get("beam_energy"),
-            "metadata": meta,
-            "rucio_metadata": fetch_rucio_metadata(run_rucio, did),
+            "energy": did_energy(did),
+            "rucio_metadata": parse_rucio_metadata(
+                run_rucio(["did", "metadata", "list", "--plugin", "ALL", did])),
             "files": pfns,
         })
     return datasets

@@ -106,7 +106,7 @@ def _make_rucio_cards(stage, config, config_path, out_dir, max_files):
             path,
             dataset=ds["did"], slug=slug, stage=stage, energy=ds.get("energy"),
             output=output, files=ds["files"],
-            metadata={"source": "rucio", **ds["metadata"],
+            metadata={"source": "rucio",
                       "rucio_metadata": ds.get("rucio_metadata", {})},
         )
         written.append(path)
@@ -162,12 +162,14 @@ def main():
 
     print("\n" + "=" * 70)
     print(f"Wrote {len(written)} card(s) to {out_dir}")
-    print(f"Next:  python -m ... stages/{_stage_script(args.stage)} -c {args.config}")
+    print(f"Next:  python simulation_pipeline/{_stage_script(args.stage)} -c {args.config}")
     print("=" * 70)
 
 
 def _stage_script(stage):
     """Best-effort hint of which stage script consumes these cards."""
+    if stage.startswith("csv"):
+        return f"40_csv_convert.py {stage}"
     return {
         "afterburner": "10_create_afterburner_jobs.py",
         "bg_merger": "11_create_background_jobs.py",
@@ -175,8 +177,6 @@ def _stage_script(stage):
         "npsim_saveall": "21_create_npsim_saveall_jobs.py",
         "npsim_background": "22_create_npsim_background_jobs.py",
         "eicrecon": "30_create_eicrecon_jobs.py",
-        "csv_dd4hep": "40_create_csv_dd4hep_jobs.py",
-        "csv_eicrecon": "41_create_csv_eicrecon_jobs.py",
     }.get(stage, f"<stage {stage}>.py")
 
 
