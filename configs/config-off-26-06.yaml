@@ -1,0 +1,24 @@
+# config-off-26-06.yaml  (official DIS NC campaign, June 2026)
+# Translated from ai-epic-background/full-sim-pipeline/dis-data-26-06.yaml.
+# csv_eicrecon cards come from rucio:  generate_datasets csv_eicrecon --rucio -c this.yaml
+extends: [config-base.yaml, config-off.yaml]
+
+base_dir: "/work/eic3/users/romanov/dis-csv-2026-06"
+container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.06.0-stable"
+bind_dirs:
+  - "${base_dir}"
+  - "/work/eic3/users/romanov"
+
+energies:
+  - "5x41"
+  - "9x100"
+  - "9x130"
+  - "9x275"
+
+event_count: 5000
+
+# --- rucio card producer -----------------------------------------------------
+rucio_did_filters: ""
+rucio_did_pattern: "epic:/RECO/26.06.0/epic_craterlake/DIS/pythia8.316-1.0/NC/noRad/ep/*"
+slug_drop_tokens: ["pythia8.316-1.0", "noRad"]
+max_files_per_dataset: 0

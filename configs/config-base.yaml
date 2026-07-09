@@ -1,0 +1,73 @@
+# config-base.yaml
+#
+# Shared skeleton for every campaign. Campaign configs `extends:` this file
+# (plus a family file, config-msf.yaml or config-off.yaml) and override only
+# what differs (base_dir, container tag, energies, ...).
+#
+# Each stage is a flat top-level block: `input` + `pattern` + `output`.
+# `generate_datasets <stage>` globs `<stage>.input` for `<stage>.pattern` and writes
+# one card per energy; the stage generator then reads those cards. Stages chain
+# via `${<stage>.output}` so the DAG is declared here, not hardcoded.
+
+# --- must be set per campaign ------------------------------------------------
+# base_dir: "/work/eic3/users/romanov/<campaign>"
+# energies: ["5x41", "9x100", "9x130", "9x275"]
+
+# --- defaults (override per campaign as needed) ------------------------------
+container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.06-stable/"
+event_count: 1000
+bind_dirs: ["${base_dir}"]
+dry_run: false
+
+# generate_datasets writes cards under <datasets_dir>/<stage>/
+datasets_dir: "${base_dir}/datasets"
+
+# Files processed sequentially per SLURM array task (CSV stages). Batching short
+# per-file converter jobs keeps job runtimes above the farm minimum.
+slurm_files_per_job: 20
+
+# --- stages ------------------------------------------------------------------
+afterburner:
+  input:   "${base_dir}/eg-hepmc/${energy}-priority"
+  pattern: "*.hepmc"
+  output:  "${base_dir}/afterburner/${energy}-priority"
+
+npsim:
+  input:   "${afterburner.output}"
+  pattern: "*.hepmc3.tree.root"
+  output:  "${base_dir}/dd4hep/${energy}"
+
+npsim_saveall:
+  input:   "${afterburner.output}"
+  pattern: "*.hepmc3.tree.root"
+  output:  "${base_dir}/dd4hep-saveall/${energy}"
+
+eicrecon:
+  input:   "${npsim.output}"
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/reco/${energy}"
+
+csv_dd4hep:
+  input:   "${npsim.output}"
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/csv-dd4hep/${energy}"
+  macros:  []            # edm4hep converters are project-specific (set per campaign)
+  stem:    basename
+
+csv_eicrecon:
+  input:   "${eicrecon.output}"
+  pattern: "*.edm4eic.root"
+  output:  "${base_dir}/csv-reco/${energy}"
+  macros:  [edm4eic_reco_particles]
+  stem:    basename
+
+# --- background chain (used by the -background campaign configs) --------------
+bg_merger:
+  input:   "${afterburner.output}"
+  pattern: "*.hepmc3.tree.root"
+  output:  "${base_dir}/bg_merged/${energy}"
+
+npsim_background:
+  input:   "${bg_merger.output}"
+  pattern: "*.bg.hepmc3.tree.root"
+  output:  "${base_dir}/dd4hep-background/${energy}"

@@ -1,0 +1,14 @@
+# config-msf-26-07.yaml  (meson-structure, July 2026 campaign)
+# Translated from meson-structure/full-sim-pipeline/config-campaign-26-07.yaml.
+extends: [config-base.yaml, config-msf.yaml]
+
+base_dir: "/work/eic3/users/romanov/meson-structure-2026-07"
+container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.06-stable/"
+
+energies:
+  - "5x41"
+  - "9x100"
+  - "9x130"
+  - "9x275"
+
+event_count: 1000

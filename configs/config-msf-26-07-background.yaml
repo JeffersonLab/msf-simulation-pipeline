@@ -1,0 +1,39 @@
+# config-msf-26-07-background.yaml  (meson-structure + ePIC background cocktails)
+# Translated from meson-structure/full-sim-pipeline/config-campaign-26-07-background.yaml.
+#
+# Chain:  afterburner -> bg_merger (11) -> npsim_background (22)
+#         -> eicrecon -> csv_eicrecon
+extends: [config-base.yaml, config-msf.yaml]
+
+base_dir: "/work/eic3/users/romanov/meson-structure-2026-07"
+container: "/work/eic3/users/romanov/meson-structure-work/eicdev-eic-full-2026-06-01.sif"
+bind_dirs:
+  - "${base_dir}"
+  - "/volatile/eic/EPIC/EVGEN/BACKGROUNDS"
+
+# Turn root://host//abs/path background sources into local /abs/path (bind-mounted).
+strip_xrootd_prefix: true
+
+energies:
+  - "5x41"
+  - "9x100"
+  - "9x130"
+  - "9x275"
+
+event_count: 1000
+
+# --- background cocktails (stages 11 + 22) -----------------------------------
+background_config_dir: "/work/eic3/users/romanov/meson-structure-work/meson-structure/eic_official_campaign_info/config_data"
+background_configs:
+  "5x41":  "synrad_egasbrems_egascoulomb_egastouschek_hgas_5GeVx41GeV_vacuum_10000Ahr_machineruntime_50s.json"
+  "9x100": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx100GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
+  "9x130": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx130GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
+  "9x275": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx275GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
+
+# Background npsim output feeds eicrecon (override the default npsim.output source).
+eicrecon:
+  input:  "${npsim_background.output}"
+  output: "${base_dir}/reco-background/${energy}"
+
+csv_eicrecon:
+  output: "${base_dir}/csv-reco-background/${energy}"

@@ -1,0 +1,27 @@
+[project]
+name = "simulation-pipeline"
+version = "0.1.0"
+description = "Shared EIC full-sim simulation pipeline (meson-structure + official/background campaigns)"
+requires-python = ">=3.10"
+dependencies = [
+    "omegaconf",
+    "pyyaml",
+]
+
+# Optional extras used only by specific stages, kept out of the core install so
+# the job generators run on a bare login node.
+[project.optional-dependencies]
+klam = ["uproot", "awkward", "pyhepmc"]   # 01_root_hepmc_klam_convert.py
+
+[project.scripts]
+generate_datasets = "simulation_pipeline.generate_datasets:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["simulation_pipeline", "simulation_pipeline.stages"]
+
+[tool.setuptools.package-data]
+simulation_pipeline = ["../csv_convert/*.cxx", "../configs/*.yaml"]
