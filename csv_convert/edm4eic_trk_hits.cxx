@@ -100,7 +100,7 @@ struct HitRecord {
 
     static std::string make_csv_header() {
         return "evt,hit_index,prt_index,"
-               "prt_pdg,prt_status,prt_energy,prt_charge,"
+               "prt_pdg,prt_status,prt_origin,prt_energy,prt_charge,"
                "prt_mom_x,prt_mom_y,prt_mom_z,"
                "prt_vtx_time,prt_vtx_pos_x,prt_vtx_pos_y,prt_vtx_pos_z,"
                "prt_end_time,prt_end_pos_x,prt_end_pos_y,prt_end_pos_z,"
@@ -111,9 +111,9 @@ struct HitRecord {
     }
 
     std::string get_csv_line() const {
-        return fmt::format("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        return fmt::format("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             evt, hit_index, prt_index,
-            prt_pdg, prt_status, prt_energy, prt_charge,
+            prt_pdg, prt_status, prt_origin, prt_energy, prt_charge,
             prt_mom_x, prt_mom_y, prt_mom_z,
             prt_vtx_time, prt_vtx_pos_x, prt_vtx_pos_y, prt_vtx_pos_z,
             prt_end_time, prt_end_pos_x, prt_end_pos_y, prt_end_pos_z,

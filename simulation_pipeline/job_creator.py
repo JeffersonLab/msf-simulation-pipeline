@@ -52,7 +52,7 @@ runner = JobCreator(
     container='/cvmfs/singularity.opensciencegrid.org/my_image:latest',
     slurm_time='48:00:00',
     slurm_cpus_per_task=4,
-    slurm_mem_per_cpu='8G',
+    slurm_mem_per_cpu='2G',   # farm provisioning: 2GB per CPU
     slurm_account='physics',
     slurm_partition='gpu'
 )
@@ -112,11 +112,15 @@ class JobCreator:
                  container: str = '/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:nightly',
                  slurm_time: str = '24:00:00',
                  slurm_cpus_per_task: int = 1,
-                 slurm_mem_per_cpu: str = '5G',  # Fixed parameter name
+                 # The JLab farm is provisioned for 2GB of memory per CPU.
+                 # Requesting more makes SLURM allocate extra CPUs just to cover
+                 # the memory (mem=5G -> 2 CPUs billed) and idles the farm.
+                 slurm_mem_per_cpu: str = '2G',
                  slurm_account: str = 'eic',
                  slurm_partition: str = 'production',
                  slurm_array_chunk: int = 10000,  # farm MaxArraySize = 10001
                  slurm_files_per_job: int = 1,    # files/array task; 1 = one job per file (CSV stages override)
+                 farm_out_dir: str = None,        # SLURM stdout/stderr base; default /farm_out/$USER
                  ):
         """Initialize JobCreator with configuration."""
         
@@ -132,7 +136,14 @@ class JobCreator:
                                       for f in input_files]
         self.config['output_dir'] = os.path.abspath(output_dir)
         self.config['jobs_dir'] = os.path.join(self.config['output_dir'], 'jobs')
-        self.config['logs_dir'] = os.path.join(self.config['output_dir'], 'logs')
+        # SLURM stdout/stderr must NOT be written to /work: farm jobs streaming
+        # logs there overload the work file server (admin requirement). Logs go
+        # under farm_out_dir instead, mirroring the output path so they are easy
+        # to find:  /farm_out/<user>/work/eic3/.../csv-reco/9x130/
+        if farm_out_dir is None:
+            farm_out_dir = f"/farm_out/{os.environ.get('USER', 'unknown')}"
+        self.config['logs_dir'] = os.path.join(
+            os.path.abspath(farm_out_dir), self.config['output_dir'].lstrip('/'))
         self.config['bind_dirs'] = [os.path.abspath(binddir) for binddir in bind_dirs]
         self.config['events'] = events
         self.config['container'] = container

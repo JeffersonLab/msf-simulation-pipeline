@@ -25,6 +25,14 @@ energies:
 # Events per job (bg_merger: number of 2us frames, one signal event per frame)
 event_count: 1000
 
+# SLURM stdout/stderr base (admin requirement: NEVER /work — farm jobs
+# streaming logs there overload the work file server).
+farm_out_dir: "/farm_out/romanov"
+
+# Memory per CPU. The farm is provisioned for 2GB/CPU; requesting more makes
+# SLURM bill extra CPUs and idles the farm.
+slurm_mem_per_cpu: "2G"
+
 # generate_datasets writes cards under <datasets_dir>/<stage>/
 datasets_dir: "${base_dir}/datasets"
 
@@ -32,7 +40,9 @@ datasets_dir: "${base_dir}/datasets"
 slurm_files_per_job: 20
 
 # ---- background cocktails (stages 11 + 22) ------------------------------------
-background_config_dir: "/work/eic3/users/romanov/meson-structure-work/meson-structure/eic_official_campaign_info/config_data"
+# Cocktail JSONs ship with the pipeline repo (background_cocktails/) — that is
+# the default. Uncomment to read them from somewhere else:
+# background_config_dir: "/some/other/config_data"
 background_configs:
   "5x41":  "synrad_egasbrems_egascoulomb_egastouschek_hgas_5GeVx41GeV_vacuum_10000Ahr_machineruntime_50s.json"
   "9x100": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx100GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
@@ -71,3 +81,4 @@ csv_eicrecon:                                       # 40_csv_convert.py csv_eicr
     - edm4eic_mcpart_lambda
     - edm4eic_reco_ff_lambda
     - edm4eic_reco_particles
+    - edm4eic_calo_clusters

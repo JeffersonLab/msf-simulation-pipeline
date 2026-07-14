@@ -25,6 +25,12 @@ from simulation_pipeline.datasets import run_card_pipeline
 
 STAGE = "npsim_background"
 
+# Cocktail JSONs shipped with this repo (background_cocktails/). A config may
+# set background_config_dir to use cocktails from somewhere else. Must match
+# stage 11 -- both read the same cocktail.
+BACKGROUND_COCKTAILS_DIR_DEFAULT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "background_cocktails")
+
 
 def load_status_offsets(config, energy):
     """Return the list of integer status offsets from the cocktail JSON."""
@@ -33,7 +39,8 @@ def load_status_offsets(config, energy):
         print(f"  WARN: no background_configs entry for '{energy}', skipping.")
         return None
 
-    cocktail_path = os.path.join(str(config.background_config_dir), str(bg_configs[energy]))
+    cocktail_dir = str(config.get("background_config_dir", BACKGROUND_COCKTAILS_DIR_DEFAULT))
+    cocktail_path = os.path.join(cocktail_dir, str(bg_configs[energy]))
     if not os.path.isfile(cocktail_path):
         print(f"  WARN: cocktail JSON not found: {cocktail_path}")
         return None
@@ -113,6 +120,8 @@ def build(config, card, config_path):
         events=config.event_count,
         container=config["container"],
         beam_config=energy or card["slug"],
+        slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
+        farm_out_dir=config.get("farm_out_dir"),
     )
     runner.container_script_template = create_container_script_template()
     runner.container_script_params_updater = lambda params: {

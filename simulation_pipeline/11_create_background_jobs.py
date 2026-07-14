@@ -25,18 +25,29 @@ from simulation_pipeline.datasets import run_card_pipeline
 
 STAGE = "bg_merger"
 
+# Cocktail JSONs shipped with this repo (background_cocktails/). A config may
+# set background_config_dir to use cocktails from somewhere else.
+BACKGROUND_COCKTAILS_DIR_DEFAULT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "background_cocktails")
 
-def load_bg_cocktail(config, energy):
-    """Return the list of {file, freq, skip, status} dicts for one energy."""
+
+def cocktail_path_for(config, energy):
+    """Path of the cocktail JSON configured for one energy, or None."""
     bg_configs = config.get("background_configs", {})
     if energy not in bg_configs:
         print(f"  WARN: no background_configs entry for '{energy}', skipping.")
         return None
+    cocktail_dir = str(config.get("background_config_dir", BACKGROUND_COCKTAILS_DIR_DEFAULT))
+    return os.path.join(cocktail_dir, str(bg_configs[energy]))
 
-    cocktail_path = os.path.join(str(config.background_config_dir), str(bg_configs[energy]))
+
+def load_bg_cocktail(config, energy):
+    """Return the list of {file, freq, skip, status} dicts for one energy."""
+    cocktail_path = cocktail_path_for(config, energy)
+    if cocktail_path is None:
+        return None
     if not os.path.isfile(cocktail_path):
         print(f"  WARN: cocktail JSON not found: {cocktail_path}")
-        print(f"        (it must be visible inside the container too)")
         return None
 
     with open(cocktail_path, "r") as fh:
@@ -123,8 +134,7 @@ def build(config, card, config_path):
 
     strip_xrootd = bool(config.get("strip_xrootd_prefix", False))
     bg_args_str = build_bg_args(bg_entries, strip_xrootd=strip_xrootd)
-    bg_cocktail_path = os.path.join(
-        str(config.background_config_dir), str(config.background_configs[energy]))
+    bg_cocktail_path = cocktail_path_for(config, energy)
 
     output_dir = card.get("output") or str(config[STAGE].output)
     runner = JobCreator(
@@ -135,6 +145,8 @@ def build(config, card, config_path):
         events=config.event_count,
         container=config["container"],
         beam_config=energy or card["slug"],
+        slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
+        farm_out_dir=config.get("farm_out_dir"),
     )
     runner.container_script_template = create_container_script_template()
     runner.container_script_params_updater = lambda params: {

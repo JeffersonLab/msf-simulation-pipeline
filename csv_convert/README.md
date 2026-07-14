@@ -28,6 +28,7 @@ generation goes through the single `40_csv_convert.py <stage>` script.
 | `edm4eic_reco_particles.cxx` | edm4eic | reco-particle dump (one row per particle) |
 | `edm4eic_mc_particles.cxx` | edm4eic | MCParticle dump |
 | `edm4eic_trk_hits.cxx` | edm4eic | tracker/calo hit dump |
+| `edm4eic_calo_clusters.cxx` | edm4eic | calo cluster dump (one row per cluster↔MCParticle association, with `prt_origin`) |
 | `edm4eic_mc_dis.cxx` | edm4eic | DIS invariants (one row per event, from `dis_*` params) |
 | `edm4eic_reco_dis.cxx` | edm4eic | reconstructed DIS kinematics |
 | `edm4eic_mcpart_lambda.cxx` | edm4eic | Lambda MC-truth |

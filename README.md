@@ -64,9 +64,21 @@ simulation_pipeline/
   job_creator.py              the job-generation engine (SLURM arrays + local)
   rucio.py                    rucio discovery (official campaigns)
 csv_convert/                  ROOT converter macros, edm4hep_* / edm4eic_*
+background_cocktails/         per-energy background cocktail JSONs (stages 11/22)
 configs/                      one self-contained YAML per campaign
 scripts/                      collect_job_stats.py, eg_*.sh helpers
 ```
+
+## Farm etiquette (baked in, per JLab admin requirements)
+
+- **SLURM stdout/stderr never goes to /work** — it overloads the work file
+  server. Logs go under `farm_out_dir` (default `/farm_out/$USER`), mirroring
+  the output path: `/farm_out/romanov/work/eic3/.../csv-reco/9x130/`. Job
+  scripts and data outputs stay on /work as before.
+- **Memory requests default to 2G/CPU** — the farm is provisioned for 2GB per
+  CPU; requesting more makes SLURM bill extra CPUs (mem=5G → 2 CPUs) and idles
+  the farm. Override per campaign with `slurm_mem_per_cpu` if a stage truly
+  needs more.
 
 ## Configs — one campaign, one file
 

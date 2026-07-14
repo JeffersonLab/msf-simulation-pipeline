@@ -140,6 +140,8 @@ def build_creator(stage, config, card):
         container=config.container,
         beam_config=card.get("energy") or card["slug"],
         slurm_files_per_job=int(config.get("slurm_files_per_job", 20)),
+        slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
+        farm_out_dir=config.get("farm_out_dir"),
     )
     runner.container_script_template = build_script_template(macros)
     runner.container_script_params_updater = add_csv_paths

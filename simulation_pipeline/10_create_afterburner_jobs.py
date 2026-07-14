@@ -67,6 +67,8 @@ def build(config, card, config_path):
         bind_dirs=config.bind_dirs,
         events=config.event_count,
         container=config['container'],
+        slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
+        farm_out_dir=config.get("farm_out_dir"),
     )
     runner.container_script_params_updater = update_params
     runner.container_script_template = create_container_script_template()

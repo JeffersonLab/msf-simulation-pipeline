@@ -24,6 +24,14 @@ energies:
 # Events per job
 event_count: 5000
 
+# SLURM stdout/stderr base (admin requirement: NEVER /work — farm jobs
+# streaming logs there overload the work file server).
+farm_out_dir: "/farm_out/romanov"
+
+# Memory per CPU. The farm is provisioned for 2GB/CPU; requesting more makes
+# SLURM bill extra CPUs and idles the farm.
+slurm_mem_per_cpu: "2G"
+
 # generate_datasets writes cards under <datasets_dir>/<stage>/
 datasets_dir: "${base_dir}/datasets"
 
@@ -43,5 +51,6 @@ csv_eicrecon:                                       # 40_csv_convert.py csv_eicr
   output: "${base_dir}/csv_eicrecon"
   macros:
     - edm4eic_trk_hits
+    - edm4eic_calo_clusters
     - edm4eic_mc_particles
     - edm4eic_reco_particles
