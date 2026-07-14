@@ -1,0 +1,5 @@
+# CMake / IDE out-of-source build directories
+build/
+cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
