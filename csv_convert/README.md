@@ -33,6 +33,8 @@ generation goes through the single `40_csv_convert.py <stage>` script.
 | `edm4eic_reco_dis.cxx` | edm4eic | reconstructed DIS kinematics |
 | `edm4eic_mcpart_lambda.cxx` | edm4eic | Lambda MC-truth |
 | `edm4eic_reco_ff_lambda.cxx` | edm4eic | Lambda far-forward reco |
+| `edm4eic_lambda_acceptance.cxx` | edm4eic | per-event Lambda->p pi- acceptance ledger (decay type, daughter FF-tracker hit counts, reco flags) |
+| `edm4eic_comb_candidates.cxx` | edm4eic | p/pi- combinatorics candidates (writes 2 CSVs: main + `*_events.csv`); B0 candidates need the eicrecon B0-recovery flags |
 | `edm4hep_acceptance_ppim.cxx` | edm4hep | p pi- acceptance (writes 3 CSVs: main + pimin_hits + prot_hits) |
 | `edm4hep_acceptance_npi0.cxx` | edm4hep | n pi0 acceptance |
 | `edm4hep_combinatorics_ppim.cxx` | edm4hep | p pi- combinatorics |

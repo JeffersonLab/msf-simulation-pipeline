@@ -19,7 +19,10 @@ energies:
   - "9x130"
   - "9x275"
 
-# Events per job
+# Events per job. Target statistics for the Lambda combinatorics ML datasets is
+# 1M events PER ENERGY = 1000 input files per energy through the whole chain
+# (eg-hepmc -> afterburner -> npsim -> eicrecon -> csv); the stages below scale
+# with whatever the input globs find, nothing else to change here.
 event_count: 1000
 
 # SLURM stdout/stderr base (admin requirement: NEVER /work — farm jobs
@@ -58,6 +61,19 @@ eicrecon:                                           # 30_create_eicrecon_jobs.py
   input:   "${npsim.output}"
   pattern: "*.edm4hep.root"
   output:  "${base_dir}/reco/${energy}"
+  # B0 recovery for Lambda -> p pi- (ai-comb-lam): truth-seed Geant4 secondaries
+  # so the displaced Lambda daughters get B0 tracks. Vertex params are raw
+  # dd4hep units (cm): 3000 = 30 m, 100 = 1 m.
+  # !! AcceptSecondaries exists only in the PATCHED EICrecon
+  # (TrackParamTruthInit, ~6 lines — /work/ai-comb-lam/notes/
+  # lesson-b0-tracking-dead-in-campaign.md). On a stock eic_xl image JANA just
+  # reports it as an unused parameter and every B0 track collection stays
+  # EMPTY, i.e. the comb_candidates CSVs will have no pion candidates.
+  flags:
+    - "-Ptracking:TrackerTruthSeeds:AcceptSecondaries=1"
+    - "-Ptracking:TrackerTruthSeeds:MaxVertexZ=3000"
+    - "-Ptracking:TrackerTruthSeeds:MaxVertexX=100"
+    - "-Ptracking:TrackerTruthSeeds:MaxVertexY=100"
 
 csv_dd4hep:                                         # 40_csv_convert.py csv_dd4hep
   input:   "${npsim.output}"
@@ -79,3 +95,9 @@ csv_eicrecon:                                       # 40_csv_convert.py csv_eicr
     - edm4eic_reco_ff_lambda
     - edm4eic_reco_particles
     - edm4eic_calo_clusters
+    # Lambda -> p pi- combinatorics (ai-comb-lam):
+    #   lambda_acceptance: per-event acceptance ledger (hits/decay/reco stages)
+    #   comb_candidates:   p/pi- candidate table (+ derived *_events.csv);
+    #                      B0 candidates need the eicrecon.flags above + patch
+    - edm4eic_lambda_acceptance
+    - edm4eic_comb_candidates

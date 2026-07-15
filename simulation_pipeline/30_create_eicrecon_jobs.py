@@ -37,7 +37,7 @@ def create_container_script_template():
         source /opt/detector/epic-main/bin/thisepic.sh
     fi
     cd $(dirname {output_file})/..
-    /usr/bin/time -v /usr/bin/time -v eicrecon -Pdd4hep:xml_files=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml  -Ppodio:output_file={output_file}  {input_file} 2>&1
+    /usr/bin/time -v /usr/bin/time -v eicrecon -Pdd4hep:xml_files=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml  -Ppodio:output_file={output_file}  {eicrecon_flags}  {input_file} 2>&1
 
     echo ""
     echo "=========================================================================="
@@ -49,6 +49,11 @@ def create_container_script_template():
 
 def build(config, card, config_path):
     output_dir = card.get("output") or str(config[STAGE].output)
+    # extra -P arguments from the config ('eicrecon.flags' list), e.g. the B0
+    # truth-seeding recovery parameters for the Lambda -> p pi- analysis.
+    # Substituted into the template here because JobCreator formats it with
+    # per-file params only.
+    flags = " ".join(str(f) for f in config[STAGE].get("flags", []))
     runner = JobCreator(
         input_files=list(card["files"]),
         output_file_name_func=exension_replacer('.edm4hep.root', '.edm4eic.root'),
@@ -60,7 +65,8 @@ def build(config, card, config_path):
         slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
         farm_out_dir=config.get("farm_out_dir"),
     )
-    runner.container_script_template = create_container_script_template()
+    runner.container_script_template = (
+        create_container_script_template().replace("{eicrecon_flags}", flags))
     runner.run()
     return runner
 
