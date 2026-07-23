@@ -1,0 +1,72 @@
+# emcal LL-profile production — July 2026 (ilreco PHASE II)
+#
+# Self-contained record of the profile generation campaign. Unlike the other
+# campaigns there are NO input files: 90-create-emcal-profile-jobs.py derives
+# every job from this file alone — one job = one calsim point-gun run at a
+# fixed sub-cell impact offset + in-container histogram fill
+# (python -m g4cal.llprof fill) -> one sparse partial npz.
+# After download, merge per energy:
+#   python -m g4cal.llprof merge --out profile_e5.npz profiles/5/partials/*.npz
+#
+# Node/impact scheme: table node (i, j) = cell-center distance from the impact
+# point in 0.01-cell units, folded to i >= j >= 0, i <= 500 (ilreco layout).
+# Impacts scan one octant of the central cell (fx in [0, 50], fy <= fx, step
+# 0.01 cell); each event fills one entry at every in-range cell of the 20x20.
+
+base_dir: "/work/eic/users/romanov/emcal-2026-07"
+
+# eicdev/eic-full with geant4 (from eic-base) + ilreco + g4cal baked in.
+# Build the sif once:  apptainer build <sif> docker://eicdev/eic-full:latest
+container: "${base_dir}/eicdev-eic-full-2026-07.sif"
+bind_dirs: ["${base_dir}"]
+
+# SLURM stdout/stderr base (admin requirement: NEVER /work)
+farm_out_dir: "/farm_out/romanov"
+
+# Farm is provisioned for 2GB/CPU; asking more bills extra CPUs.
+# Measured: calsim peak RSS 160 MB; fill step < 300 MB (20 GeV worst case).
+slurm_mem_per_cpu: "2G"
+
+# Per-energy walltime for a 20k-event job. Local clean-machine rates
+# 54/33/25/14/7/4 evt/s/core (1..20 GeV) -> 6..95 min/job; ~2x farm margin.
+slurm_time:
+  1: "01:00:00"
+  2: "01:00:00"
+  3: "01:30:00"
+  5: "02:00:00"
+  10: "03:00:00"
+  20: "05:00:00"
+
+energies: [1, 2, 3, 5, 10, 20]
+
+profiles:                       # 90-create-emcal-profile-jobs.py
+  output: "${base_dir}/profiles/${energy}"
+  particle: gamma
+  impact_step: 1                # 0.01-cell units; 1 -> 1326 impact points/energy
+  impact_max: 50
+  node_i_max: 500
+  events_per_job: 20000
+  jobs_per_impact: 5            # 5 x 20k -> >= 100k entries/node/energy, 6630 jobs/energy
+  seed_base: 900000
+  # f histogram: log-spaced bins + separate zero count (see g4cal.llprof)
+  f_min: 1.0e-6
+  f_max: 1.5
+  bins_per_decade: 100
+
+# calsim geometry + response chain, copied from g4cal configs/config.yaml
+# (values repeated here on purpose: this file is the full record of what ran)
+calsim:
+  nx: 20                        # 20x20, no hole (PHASE II comparison setup)
+  crystal_xy_mm: 20.55
+  crystal_z_mm: 200.0
+  wrap_mm: 0.175
+  pitch_mm: 20.9                # crystal_xy + 2*wrap
+  att: "on"
+  lambda_mm: 2000.0
+  veff_mm_ns: 130.0
+  smear: "on"
+  en_scale: 1.0962
+  meas: [0.0308, 0.010, 0.007]
+  intrinsic: [0.0171216, 0.0155070]
+  thresh_att_gev: 0.005         # 5 MeV sparsification -> the strong p0(E) dependence
+  store_min_gev: 0.0001
