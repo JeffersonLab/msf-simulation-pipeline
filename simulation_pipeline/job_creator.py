@@ -398,14 +398,20 @@ class JobCreator:
         return script_path
 
     def write_submit_all_script(self):
-        """Write master script that submits everything as SLURM job arrays.
+        """Write the submit script for THIS dataset's jobs (one energy/beam config).
 
         One sbatch call covers up to slurm_array_chunk tasks (vs one sbatch
         per file, which made submitting thousands of jobs as slow as running
         them). Per-file .slurm.sh scripts are still generated for reruns of
         individual files.
+
+        Deliberately named `submit_jobs.sh`, NOT `submit_all_slurm_jobs.sh`:
+        the only script that submits *all* datasets is the aggregate one that
+        write_top_master_scripts() puts one level up. Two files with the same
+        name at different levels made it easy to `cd` into the last dataset's
+        jobs/ dir, run "submit all", and silently submit a single energy.
         """
-        script_path = os.path.join(self.config['jobs_dir'], 'submit_all_slurm_jobs.sh')
+        script_path = os.path.join(self.config['jobs_dir'], 'submit_jobs.sh')
         array_script = self.write_array_script()
 
         n_files = len(self.generated_scripts['container'])
@@ -415,13 +421,20 @@ class JobCreator:
         # possibly-partial chunk is covered.
         n_tasks = (n_files + files_per_job - 1) // files_per_job
         chunk = self.config['slurm_array_chunk']
+        dataset = self.config['beam_config'] or os.path.basename(self.config['output_dir'])
 
         script_lines = [
             "#!/bin/bash",
             "set -e",
             "",
-            f"# Submit {n_files} files as {n_tasks} SLURM array task(s), "
-            f"{files_per_job} file(s) per task (MaxArraySize chunk {chunk})",
+            f"# Submits ONLY the '{dataset}' dataset: {n_files} files as {n_tasks} "
+            f"SLURM array task(s), {files_per_job} file(s) per task "
+            f"(MaxArraySize chunk {chunk}).",
+            "# To submit every dataset, use submit_all_slurm_jobs.sh one level up.",
+            "",
+            f"echo \"Submitting dataset '{dataset}' ({n_files} files, {n_tasks} array tasks)\"",
+            f"echo \"  output: {self.config['output_dir']}\"",
+            f"echo \"  logs:   {self.config['logs_dir']}\"",
             ""
         ]
         for offset in range(0, n_tasks, chunk):
@@ -431,7 +444,8 @@ class JobCreator:
 
         script_lines.append("")
         script_lines.append(
-            f"echo \"Submitted {n_files} files as {n_tasks} SLURM array task(s)!\"")
+            f"echo \"Submitted dataset '{dataset}': {n_files} files as "
+            f"{n_tasks} SLURM array task(s).\"")
 
         with open(script_path, 'w') as f:
             f.write('\n'.join(script_lines))
@@ -440,8 +454,12 @@ class JobCreator:
         return script_path
     
     def write_run_all_script(self):
-        """Write script to run all jobs locally in sequence with timing."""
-        script_path = os.path.join(self.config['jobs_dir'], 'run_all_local.sh')
+        """Write script to run THIS dataset's jobs locally in sequence with timing.
+
+        Named `run_local.sh` for the same reason as submit_jobs.sh: the
+        all-datasets version is `run_all_local.sh` one level up.
+        """
+        script_path = os.path.join(self.config['jobs_dir'], 'run_local.sh')
         
         # Create bindings string
         bindings = ' '.join([f'-B {binddir}:{binddir}' for binddir in self.config['bind_dirs']])
@@ -560,13 +578,13 @@ class JobCreator:
         print(f"\nGenerated {len(self.config['input_files'])} job sets:")
         print(f"  - Container scripts: {len(self.generated_scripts['container'])}")
         print(f"  - SLURM scripts:     {len(self.generated_scripts['slurm'])}")
-        print(f"\nMaster scripts:")
-        print(f"  - Submit all (SLURM): {submit_script}")
-        print(f"  - Run all (local):    {run_script}")
-        print("\nTo submit all jobs to SLURM:")
-        print(f"  cd {self.config['jobs_dir']} && ./submit_all_slurm_jobs.sh")
-        print("\nTo run all jobs locally:")
-        print(f"  cd {self.config['jobs_dir']} && ./run_all_local.sh")
+        dataset = self.config['beam_config'] or os.path.basename(self.config['output_dir'])
+        print(f"\nScripts for THIS dataset only ('{dataset}'):")
+        print(f"  - Submit (SLURM): {submit_script}")
+        print(f"  - Run (local):    {run_script}")
+        print(f"\nTo submit ONLY '{dataset}' to SLURM:")
+        print(f"  {submit_script}")
+        print("(The all-datasets submit script is printed once at the very end.)")
         print("="*80)
 
 
@@ -734,9 +752,17 @@ def write_top_master_scripts(creators, top_dir=None):
     print("=" * 80)
     print(f"  Top dir:          {top_dir}")
     print(f"  Energies covered: {len(creators)}")
+    for c in creators:
+        print(f"      {os.path.basename(c.config['output_dir']):<10} "
+              f"{len(c.generated_scripts['container']):7d} jobs -> "
+              f"{c.config['logs_dir']}")
     print(f"  Total SLURM jobs: {total_slurm}")
-    print(f"  Submit all:       {submit_path}")
     print(f"  Run all locally:  {run_path}")
+    print("")
+    print("  >>> SUBMIT EVERYTHING WITH:")
+    print(f"  >>>   {submit_path}")
+    print("  (the submit_jobs.sh inside each <dataset>/jobs/ submits that "
+          "dataset alone)")
     print("=" * 80)
 
     return submit_path, run_path

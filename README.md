@@ -66,7 +66,9 @@ simulation_pipeline/
 csv_convert/                  ROOT converter macros, edm4hep_* / edm4eic_*
 background_cocktails/         per-energy background cocktail JSONs (stages 11/22)
 configs/                      one self-contained YAML per campaign
-scripts/                      collect_job_stats.py, eg_*.sh helpers
+scripts/                      collect_files_status.py (log progress),
+                              collect_job_stats.py (sacct resource usage),
+                              eg_*.sh helpers
 ```
 
 ## Farm etiquette (baked in, per JLab admin requirements)
@@ -79,6 +81,28 @@ scripts/                      collect_job_stats.py, eg_*.sh helpers
   CPU; requesting more makes SLURM bill extra CPUs (mem=5G → 2 CPUs) and idles
   the farm. Override per campaign with `slurm_mem_per_cpu` if a stage truly
   needs more.
+
+## Submitting: which script submits what
+
+A generator run produces two levels of submit scripts, named so they can't be
+confused:
+
+```
+<stage_output>/submit_all_slurm_jobs.sh        <- ALL datasets (every energy)
+<stage_output>/<dataset>/jobs/submit_jobs.sh   <- that one dataset only
+<stage_output>/run_all_local.sh                <- ALL datasets, locally
+<stage_output>/<dataset>/jobs/run_local.sh     <- that one dataset, locally
+```
+
+The all-datasets path is the last thing printed at the end of a generator run.
+Each `submit_jobs.sh` echoes the dataset name, job count and its log directory
+before submitting, so a partial submission is obvious in the terminal.
+
+To check afterwards what was actually submitted:
+
+```bash
+squeue -u $USER -h -o '%j' | sort | uniq -c
+```
 
 ## Configs — one campaign, one file
 
