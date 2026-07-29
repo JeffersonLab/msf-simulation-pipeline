@@ -2,16 +2,20 @@
 #
 # Self-contained record of the profile generation campaign. Unlike the other
 # campaigns there are NO input files: 90-create-emcal-profile-jobs.py derives
-# every job from this file alone — one job = one calsim point-gun run at a
-# fixed sub-cell impact offset + in-container histogram fill
-# (python -m g4cal.llprof fill) -> one sparse partial npz.
-# After download, merge per energy:
+# every job from this file alone - one job = one calsim point-gun run at a
+# fixed sub-cell impact point + in-container histogram fill
+# (python -m g4cal.llprof fill) -> one sparse partial npz, written atomically
+# (an existing npz is complete; compare partials/ count vs job count and
+# resubmit missing jobs). After download, merge per energy:
 #   python -m g4cal.llprof merge --out profile_e5.npz profiles/5/partials/*.npz
 #
-# Node/impact scheme: table node (i, j) = cell-center distance from the impact
-# point in 0.01-cell units, folded to i >= j >= 0, i <= 500 (ilreco layout).
-# Impacts scan one octant of the central cell (fx in [0, 50], fy <= fx, step
-# 0.01 cell); each event fills one entry at every in-range cell of the 20x20.
+# Table scheme (see g4cal/llprof.py docstring): a table entry is keyed by the
+# displacement from the photon impact point to a cell center, in 0.01-cell
+# units, reduced by the square-cell symmetry to
+#   offset_major = max(|offset_x|, |offset_y|) >= offset_minor = min(...) >= 0.
+# Impact points scan one octant of the central cell (impact_x in
+# [0, impact_max], impact_y <= impact_x); every other position is a mirror
+# image. Each event fills one sample at every in-range cell of the 20x20.
 
 base_dir: "/work/eic/users/romanov/emcal-2026-07"
 
@@ -30,7 +34,7 @@ farm_out_dir: "/farm_out/romanov"
 # Measured: calsim peak RSS 160 MB; fill step < 300 MB (20 GeV worst case).
 slurm_mem_per_cpu: "2G"
 
-# Per-energy walltime for a 20k-event job. Local clean-machine rates
+# Walltime for a 100k-event job, per energy. Local clean-machine rates
 # 54/33/25/14/7/4 evt/s/core (1..20 GeV) -> 6..95 min/job; ~2x farm margin.
 slurm_time:
   0.5: "12:00:00"
@@ -44,38 +48,45 @@ slurm_time:
 energies: [0.5, 1, 2, 3, 5, 10, 20]
 
 profiles:                       # 90-create-emcal-profile-jobs.py
-  output: "${base_dir}/profiles/${energy}"
+  output: "${base_dir}/profiles/${energy}"    # partial npz in ${output}/partials/
   particle: gamma
-  impact_step: 1                # 0.01-cell units; 1 -> 1326 impact points/energy
-  impact_max: 50
-  node_i_max: 350               #500
+  impact_step: 1                # gun-position scan step, 0.01-cell units
+  impact_max: 50                # scan cell center (0) -> cell corner (50 = half
+                                # a cell); with step 1 the octant has 1326 points
   events_per_job: 100000
-  jobs_per_impact: 1            # 1 x 100k -> >= 100k entries/node/energy, 6630 jobs/energy
+  jobs_per_impact: 1            # chunks per impact point; 1 x 100k events
+                                # -> >= 100k samples/table entry/energy, 1326 jobs/energy
   seed_base: 900000
+  max_cell_offset: 350          # tabulate only cells whose center lies within
+                                # 3.5 cells of the impact point (larger-axis
+                                # distance, 0.01-cell units); full ilreco table is 500
   # f histogram: log-spaced bins + separate zero count (see g4cal.llprof)
   f_min: 1.0e-6
   f_max: 1.5
   bins_per_decade: 100
 
-# calsim geometry + response chain, copied from g4cal configs/config.yaml
+# calsim geometry + response chain, mirroring g4cal configs/config.yaml
 # (values repeated here on purpose: this file is the full record of what ran)
 calsim:
-  nx: 20                        # 20x20, no hole (PHASE II comparison setup)
+  crystals_nx: 20               # 20x20 crystals, no hole (PHASE II comparison setup)
   hadronic: "off"               # EM-only showers for profile tables: disables
                                 # gamma/electro/muon-nuclear (photonuclear tail
                                 # seen in llprof_node_distributions.png).
                                 # NEEDS calsim >= the --hadronic flag: rebuild
                                 # the sif with current g4cal before submitting.
-  crystal_xy_mm: 20.55
-  crystal_z_mm: 200.0
-  wrap_mm: 0.175
-  pitch_mm: 20.9                # crystal_xy + 2*wrap
-  att: "on"
-  lambda_mm: 2000.0
-  veff_mm_ns: 130.0
-  smear: "on"
-  en_scale: 1.0962
-  meas: [0.0308, 0.010, 0.007]
-  intrinsic: [0.0171216, 0.0155070]
-  thresh_att_gev: 0.005         # 5 MeV sparsification -> the strong p0(E) dependence
+  crystal_side_mm: 20.55        # square side, halld ECAL crystal
+  crystal_length_mm: 200.0
+  wrap_thickness_mm: 0.175      # Tedlar per lateral face
+  pitch_mm: 20.9                # crystal_side + 2*wrap_thickness
+  attenuation: "on"
+  atten_length_mm: 2000.0       # light attenuation length in the crystal
+  light_speed_mm_ns: 130.0      # effective light speed, used for hit timing
+  smearing: "on"
+  energy_scale: 1.0962
+  # resolution model sigma_E/E = sqrt(stochastic^2/E + noise^2/E^2 + constant^2);
+  # smearing adds the quadrature difference measured_res^2 - intrinsic_res^2
+  measured_res:  {stochastic: 0.0308, noise: 0.010, constant: 0.007}   # measured halld ECAL
+  intrinsic_res: {stochastic: 0.0171216, noise: 0.0155070}             # intrinsic Geant part
+  hit_threshold_gev: 0.005      # 5 MeV sparsification, on attenuated unscaled
+                                # energy -> the strong p0(E) dependence
   store_min_gev: 0.0001
