@@ -2,9 +2,13 @@
 """
 collect_job_stats.py
 
-Pull the recent SLURM jobs of a user from `sacct` and report how much of the
-*requested* resources they actually used: memory (MaxRSS vs --mem-per-cpu),
-CPU time (TotalCPU vs cores x walltime) and walltime (Elapsed vs --time).
+Pull the recent SLURM jobs of a user from `sacct` and report
+
+  * where the campaign stands — done / running / queued / failed, as a pie
+    plus a per-SLURM-state breakdown (TIMEOUT vs OUT_OF_MEMORY vs ...),
+  * how much of the *requested* resources the jobs actually used: memory
+    (MaxRSS vs --mem-per-cpu), CPU time (TotalCPU vs cores x walltime) and
+    walltime (Elapsed vs --time).
 
 Over-requesting is not free on the JLab farm: it is provisioned for 2 GB of
 memory per CPU, so asking for more memory makes SLURM allocate (and bill) extra
@@ -15,7 +19,7 @@ For "how far did each job get through its file" (parsing *.slurm.log) see
 collect_files_status.py.
 
 Usage:
-    # last 24 h of your jobs, histograms into ./job_stats/
+    # last 24 h of your jobs, status pie + histograms into ./job_stats/
     python collect_job_stats.py
 
     # a whole campaign, only the emcal profile jobs, text only
@@ -53,6 +57,25 @@ SACCT_FORMAT = [
 
 UNIT_BYTES = {"K": 1024, "M": 1024 ** 2, "G": 1024 ** 3, "T": 1024 ** 4}
 GB = float(1024 ** 3)
+
+# Coarse buckets for the "how is the campaign going" pie. Everything that is
+# neither done nor still moving counts as failed — a CANCELLED job is work you
+# have to redo just like a TIMEOUT one.
+STATUS_GROUPS = [
+    ("done",     ["COMPLETED"],                              "#2e8b57"),
+    ("running",  ["RUNNING", "COMPLETING", "RESIZING"],      "#4682b4"),
+    ("queued",   ["PENDING", "REQUEUED", "SUSPENDED"],       "#daa520"),
+    ("failed",   None,                                       "#b22222"),  # catch-all
+]
+STATUS_ORDER = [name for name, _, _ in STATUS_GROUPS]
+STATUS_COLOR = {name: color for name, _, color in STATUS_GROUPS}
+
+
+def status_group(state):
+    for name, states, _ in STATUS_GROUPS:
+        if states and state in states:
+            return name
+    return "failed"
 
 
 # --------------------------------------------------------------------------
@@ -204,10 +227,12 @@ def parse_sacct(raw, name_filter=None):
         timelimit = parse_duration(rec["Timelimit"])
         req_mem = parse_req_mem(rec["ReqMem"], rec["ReqTRES"], alloc_cpus, req_cpus)
 
+        state = rec["State"].split()[0]             # 'CANCELLED by 1234' -> 'CANCELLED'
         result.append({
             "job_id": job_id,
             "name": name,
-            "state": rec["State"].split()[0],       # 'CANCELLED by 1234' -> 'CANCELLED'
+            "state": state,
+            "group": status_group(state),
             "partition": rec["Partition"],
             "cpus": cpus,
             "exit_code": rec["ExitCode"],
@@ -264,12 +289,35 @@ def print_report(jobs, top=10):
     print(f"SLURM JOB RESOURCE REPORT   ({len(jobs)} jobs)")
     print("=" * 78)
 
+    total = len(jobs)
+    groups = defaultdict(int)
     states = defaultdict(int)
+    states_by_group = defaultdict(lambda: defaultdict(int))
     for j in jobs:
+        groups[j["group"]] += 1
         states[j["state"]] += 1
-    print("\nStates:")
-    for state, n in sorted(states.items(), key=lambda kv: -kv[1]):
-        print(f"  {state:<15} {n:6d}  ({n / len(jobs) * 100:5.1f}%)")
+        states_by_group[j["group"]][j["state"]] += 1
+
+    print("\nStatus:")
+    for name in STATUS_ORDER:
+        n = groups.get(name, 0)
+        if not n:
+            continue
+        bar = "#" * int(round(n / total * 40))
+        print(f"  {name:<9} {n:7d}  {n / total * 100:5.1f}%  {bar}")
+        # Break the coarse bucket down so 'failed' is actionable.
+        detail = sorted(states_by_group[name].items(), key=lambda kv: -kv[1])
+        if len(detail) > 1:
+            print("            " + ", ".join(f"{s} {c}" for s, c in detail))
+
+    finished = groups.get("done", 0) + groups.get("failed", 0)
+    in_flight = groups.get("running", 0) + groups.get("queued", 0)
+    if finished:
+        print(f"\n  Success rate  : {groups.get('done', 0) / finished * 100:5.1f}% "
+              f"of {finished} finished job(s)")
+    if in_flight:
+        print(f"  Still to go   : {in_flight} job(s) "
+              f"({in_flight / total * 100:.1f}% of the campaign)")
 
     # Only completed jobs carry meaningful peak usage: a job killed at 3 %
     # of its work says nothing about what a full job needs.
@@ -339,8 +387,7 @@ def print_report(jobs, top=10):
                       f"{(j['mem_eff'] or 0):5.1f}% {fmt_hms(j['elapsed_s']):>10} "
                       f"{(j['cpu_eff'] or 0):5.1f}%")
 
-    failed = [j for j in jobs if j["state"] not in ("COMPLETED", "RUNNING",
-                                                    "PENDING")]
+    failed = [j for j in jobs if j["group"] == "failed"]
     if failed:
         print("\n" + "-" * 78)
         print(f"NON-COMPLETED JOBS ({len(failed)})")
@@ -365,14 +412,81 @@ def print_report(jobs, top=10):
 # plots
 # --------------------------------------------------------------------------
 
-def make_plots(pool, out_dir, prefix):
+def _pyplot():
+    """Import matplotlib lazily; None if it is not installed."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        return plt
     except ImportError:
         print("\nWARN: matplotlib not installed — skipping plots "
               "(pip install matplotlib, or pass --no-plot)")
+        return None
+
+
+def make_status_plot(jobs, out_dir, prefix):
+    """Pie of done/running/queued/failed + a bar of the exact SLURM states."""
+    plt = _pyplot()
+    if plt is None:
+        return None
+
+    groups = defaultdict(int)
+    states = defaultdict(int)
+    for j in jobs:
+        groups[j["group"]] += 1
+        states[j["state"]] += 1
+
+    present = [g for g in STATUS_ORDER if groups.get(g)]
+    counts = [groups[g] for g in present]
+    total = sum(counts)
+
+    fig, (ax_pie, ax_bar) = plt.subplots(
+        1, 2, figsize=(13, 5.5), gridspec_kw={"width_ratios": [1, 1.3]})
+
+    wedges, _, autotexts = ax_pie.pie(
+        counts,
+        labels=[f"{g}\n{groups[g]}" for g in present],
+        colors=[STATUS_COLOR[g] for g in present],
+        autopct=lambda pct: f"{pct:.1f}%" if pct >= 3 else "",
+        startangle=90, counterclock=False,
+        wedgeprops={"edgecolor": "white", "linewidth": 1.5},
+        textprops={"fontsize": 10})
+    for t in autotexts:
+        t.set_color("white")
+        t.set_fontweight("bold")
+    ax_pie.set_title(f"Job status — {total} jobs", fontsize=12)
+
+    # Exact states, so 'failed' is broken into TIMEOUT / OUT_OF_MEMORY / ...
+    ordered = sorted(states.items(), key=lambda kv: (STATUS_ORDER.index(
+        status_group(kv[0])), -kv[1]))
+    labels = [s for s, _ in ordered]
+    values = [c for _, c in ordered]
+    bars = ax_bar.barh(range(len(labels)), values,
+                       color=[STATUS_COLOR[status_group(s)] for s in labels])
+    ax_bar.set_yticks(range(len(labels)))
+    ax_bar.set_yticklabels(labels, fontsize=9)
+    ax_bar.invert_yaxis()
+    ax_bar.set_xlabel("jobs")
+    ax_bar.set_title("SLURM states", fontsize=12)
+    for bar, value in zip(bars, values):
+        ax_bar.text(bar.get_width() + total * 0.01,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{value}  ({value / total * 100:.1f}%)",
+                    va="center", fontsize=9)
+    ax_bar.set_xlim(0, max(values) * 1.25)
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, f"{prefix}_status.png")
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+    print(f"Saved {path}")
+    return path
+
+
+def make_plots(pool, out_dir, prefix):
+    plt = _pyplot()
+    if plt is None:
         return None
 
     def vlines(ax, values, label):
@@ -496,6 +610,7 @@ def main():
     if not args.no_plot or args.csv:
         os.makedirs(args.out_dir, exist_ok=True)
     if not args.no_plot:
+        make_status_plot(jobs, args.out_dir, args.prefix)
         make_plots(pool, args.out_dir, args.prefix)
     if args.csv:
         write_csv(jobs, os.path.join(args.out_dir, f"{args.prefix}_jobs.csv"))

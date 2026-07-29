@@ -67,7 +67,7 @@ csv_convert/                  ROOT converter macros, edm4hep_* / edm4eic_*
 background_cocktails/         per-energy background cocktail JSONs (stages 11/22)
 configs/                      one self-contained YAML per campaign
 scripts/                      collect_files_status.py (log progress),
-                              collect_job_stats.py (sacct resource usage),
+                              collect_job_stats.py (sacct status + resources),
                               eg_*.sh helpers
 ```
 
