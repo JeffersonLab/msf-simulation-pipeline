@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+scripts/job_stats/jobstats_resources.png
+simulation_pipeline/job_stats/jobstats_status.png
+simulation_pipeline/job_stats/jobstats_resources.png

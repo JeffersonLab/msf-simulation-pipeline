@@ -12,6 +12,7 @@ dependencies = [
 # the job generators run on a bare login node.
 [project.optional-dependencies]
 klam = ["uproot", "awkward", "pyhepmc"]   # 01_root_hepmc_klam_convert.py
+vis = ["matplotlib", "mplhep"]            # 02_vis.py
 
 [project.scripts]
 generate_datasets = "simulation_pipeline.generate_datasets:main"

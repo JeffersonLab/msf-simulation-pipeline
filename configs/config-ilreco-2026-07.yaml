@@ -33,13 +33,13 @@ slurm_mem_per_cpu: "2G"
 # Per-energy walltime for a 20k-event job. Local clean-machine rates
 # 54/33/25/14/7/4 evt/s/core (1..20 GeV) -> 6..95 min/job; ~2x farm margin.
 slurm_time:
-  0.5: "02:00:00"
-  1: "02:00:00"
-  2: "02:00:00"
-  3: "02:30:00"
-  5: "03:00:00"
-  10: "06:00:00"
-  20: "06:00:00"
+  0.5: "12:00:00"
+  1: "12:00:00"
+  2: "12:00:00"
+  3: "15:30:00"
+  5: "15:00:00"
+  10: "18:00:00"
+  20: "20:00:00"
 
 energies: [0.5, 1, 2, 3, 5, 10, 20]
 
@@ -48,9 +48,9 @@ profiles:                       # 90-create-emcal-profile-jobs.py
   particle: gamma
   impact_step: 1                # 0.01-cell units; 1 -> 1326 impact points/energy
   impact_max: 50
-  node_i_max: 500
-  events_per_job: 20000
-  jobs_per_impact: 5            # 5 x 20k -> >= 100k entries/node/energy, 6630 jobs/energy
+  node_i_max: 350               #500
+  events_per_job: 100000
+  jobs_per_impact: 1            # 1 x 100k -> >= 100k entries/node/energy, 6630 jobs/energy
   seed_base: 900000
   # f histogram: log-spaced bins + separate zero count (see g4cal.llprof)
   f_min: 1.0e-6
