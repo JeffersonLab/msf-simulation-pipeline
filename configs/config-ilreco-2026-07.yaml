@@ -61,6 +61,11 @@ profiles:                       # 90-create-emcal-profile-jobs.py
 # (values repeated here on purpose: this file is the full record of what ran)
 calsim:
   nx: 20                        # 20x20, no hole (PHASE II comparison setup)
+  hadronic: "off"               # EM-only showers for profile tables: disables
+                                # gamma/electro/muon-nuclear (photonuclear tail
+                                # seen in llprof_node_distributions.png).
+                                # NEEDS calsim >= the --hadronic flag: rebuild
+                                # the sif with current g4cal before submitting.
   crystal_xy_mm: 20.55
   crystal_z_mm: 200.0
   wrap_mm: 0.175

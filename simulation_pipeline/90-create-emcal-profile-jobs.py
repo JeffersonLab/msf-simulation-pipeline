@@ -29,7 +29,15 @@ CONTAINER_TEMPLATE = textwrap.dedent("""\
     echo "  output: {output_file}"
 
     source $GEANT4_INS_PATH/bin/geant4.sh
-    TMP="${{SLURM_TMPDIR:-/tmp}}/{basename}"
+    # Scratch MUST NOT be /tmp - not in slurm jobs and not interactively on
+    # ifarm nodes (admin requirement). Slurm starts the job in a per-job
+    # working dir on node-local disk that it accounts and cleans up - write
+    # there. Interactive runs (run_local.sh) use $PWD/tmp/.
+    if [ -n "${{SLURM_JOB_ID:-}}" ]; then
+        TMP="$PWD/{basename}"
+    else
+        TMP="$PWD/tmp/{basename}"
+    fi
     mkdir -p "$TMP" "$(dirname {output_file})"
     trap 'rm -rf "$TMP"' EXIT
 
@@ -43,7 +51,7 @@ CONTAINER_TEMPLATE = textwrap.dedent("""\
         --meas-a {meas_a} --meas-b {meas_b} --meas-c {meas_c} \\
         --intr-a {intr_a} --intr-b {intr_b} \\
         --thresh-att {thresh_att_gev} --store-min {store_min_gev} \\
-        --time off --t-sigma 0.4
+        --time off --t-sigma 0.4 --hadronic {hadronic}
 
     python3 -m g4cal.llprof fill \\
         --hits "$TMP/hits.csv" --run-json "$TMP/run.json" --out {output_file} \\
@@ -90,6 +98,7 @@ def process_energy(config, energy, config_path):
                 "intr_a": cs.intrinsic[0], "intr_b": cs.intrinsic[1],
                 "thresh_att_gev": cs.thresh_att_gev,
                 "store_min_gev": cs.store_min_gev,
+                "hadronic": cs.hadronic,
             }
 
     def output_name(input_file, output_dir):
