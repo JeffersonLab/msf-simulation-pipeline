@@ -10,6 +10,12 @@ Pull the recent SLURM jobs of a user from `sacct` and report
     (MaxRSS vs --mem-per-cpu), CPU time (TotalCPU vs cores x walltime) and
     walltime (Elapsed vs --time).
 
+Anything walltime-related is split by requested --time, because a campaign asks
+for a different limit per energy: the overview panel overlays one translucent
+histogram per limit with a matching dashed limit line, and each limit also gets
+its own {prefix}_walltime_<HHhMMm>.png so the long datasets don't squash the
+short ones.
+
 Over-requesting is not free on the JLab farm: it is provisioned for 2 GB of
 memory per CPU, so asking for more memory makes SLURM allocate (and bill) extra
 CPUs, and a walltime much longer than the real runtime pushes jobs down the
@@ -340,10 +346,20 @@ def print_report(jobs, top=10):
     print(summarize([j["max_rss_gb"] for j in pool]))
     print("\n  Memory used / requested, %:")
     print(summarize([j["mem_eff"] for j in pool], unit="%"))
-    print("\n  Walltime (Elapsed), hours:")
-    print(summarize([j["elapsed_s"] for j in pool], scale=1 / 3600.0, unit=" h"))
-    print("\n  Walltime used / requested, %:")
-    print(summarize([j["time_eff"] for j in pool], unit="%"))
+    # Walltime is only meaningful per requested --time: a campaign asks for a
+    # different limit per energy, and a pooled median mixes 30-min and 8-h jobs.
+    by_limit = limit_groups(pool)
+    print("\n  Walltime, per requested --time:")
+    print(f"    {'limit':>9} {'jobs':>7} {'median':>10} {'p99':>10} "
+          f"{'p99/limit':>10} {'>80% limit':>11}")
+    for lim, group in by_limit.items():
+        elapsed = [j["elapsed_s"] for j in group]
+        med, p99 = percentile(elapsed, 50), percentile(elapsed, 99)
+        near = sum(1 for j in group if (j["time_eff"] or 0) >= 80.0)
+        print(f"    {fmt_hms(lim).strip():>9} {len(group):7d} "
+              f"{fmt_hms(med).strip():>10} {fmt_hms(p99).strip():>10} "
+              f"{p99 / lim * 100:9.0f}% {near:11d}")
+
     print("\n  CPU efficiency (TotalCPU / cores*Elapsed), %:")
     print(summarize([j["cpu_eff"] for j in pool], unit="%"))
 
@@ -352,7 +368,6 @@ def print_report(jobs, top=10):
     print("SUGGESTED REQUESTS (p99 of observed usage + 25 % headroom)")
     print("-" * 78)
     rss_p99 = percentile([j["max_rss_gb"] for j in pool if j["max_rss_gb"]], 99)
-    el_p99 = percentile([j["elapsed_s"] for j in pool if j["elapsed_s"]], 99)
     if rss_p99:
         want = rss_p99 * 1.25
         print(f"  memory   : {want:.2f} GB/job  "
@@ -362,14 +377,20 @@ def print_report(jobs, top=10):
             print(f"             -> over-requested by "
                   f"{req_mems[-1] / want:.1f}x; on a 2 GB/CPU farm this bills "
                   f"idle CPUs")
-    if el_p99:
-        want = el_p99 * 1.25
-        print(f"  walltime : {fmt_hms(want).strip()}  "
-              f"(p99 elapsed {fmt_hms(el_p99).strip()}, requested "
-              f"{fmt_hms(req_times[-1]).strip() if req_times else 'n/a'})")
-        if el_p99 < 120:
+    # One suggestion per requested limit — a pooled number would over-request
+    # the short datasets and under-request the long ones.
+    for lim, group in by_limit.items():
+        p99 = percentile([j["elapsed_s"] for j in group], 99)
+        want = p99 * 1.25
+        print(f"  walltime : {fmt_hms(want).strip():>9}  "
+              f"(p99 elapsed {fmt_hms(p99).strip()}, requested "
+              f"{fmt_hms(lim).strip()}, {len(group)} jobs)")
+        if p99 < 120:
             print("             -> jobs shorter than 2 min: farm admins flag "
                   "these; batch more work per job")
+        elif want > lim:
+            print("             -> tail already runs into the limit; "
+                  "expect TIMEOUTs")
 
     # ---- worst offenders --------------------------------------------------
     if top:
@@ -423,6 +444,141 @@ def _pyplot():
         print("\nWARN: matplotlib not installed — skipping plots "
               "(pip install matplotlib, or pass --no-plot)")
         return None
+
+
+def limit_label(seconds):
+    """10:00:00 -> '10h00m'  (safe as a file-name fragment)."""
+    seconds = int(seconds)
+    return f"{seconds // 3600:02d}h{seconds % 3600 // 60:02d}m"
+
+
+def limit_groups(pool):
+    """{timelimit_s: [jobs]}, sorted by limit.
+
+    A campaign requests a different --time per energy, so mixing them into one
+    histogram (with four unrelated 'time limit' lines) hides the very thing the
+    plot is for. Everything walltime-related is drawn per requested limit.
+    """
+    groups = defaultdict(list)
+    for j in pool:
+        if j["timelimit_s"] and j["elapsed_s"] is not None:
+            groups[j["timelimit_s"]].append(j)
+    return dict(sorted(groups.items()))
+
+
+def limit_colors(plt, limits):
+    cmap = plt.get_cmap("tab10")
+    return {lim: cmap(i % 10) for i, lim in enumerate(limits)}
+
+
+def _edges(values, bins, pad_to=None):
+    """Shared bin edges so the overlaid histograms line up."""
+    hi = max(values) if values else 1.0
+    if pad_to:
+        hi = max(hi, pad_to)
+    hi *= 1.02
+    return [hi * i / bins for i in range(bins + 1)]
+
+
+def plot_walltime_by_limit(ax, groups, colors, as_fraction=False, bins=40,
+                           legend=True):
+    """Overlay one semi-transparent histogram per requested time limit.
+
+    as_fraction=False -> elapsed hours, one dashed line per limit in the
+    matching colour; True -> elapsed/limit in %, where every limit shares the
+    single 100 % line.
+    """
+    if as_fraction:
+        series = {lim: [j["time_eff"] for j in js if j["time_eff"] is not None]
+                  for lim, js in groups.items()}
+        refs = {}
+        xlabel = "% of requested walltime"
+    else:
+        series = {lim: [j["elapsed_s"] / 3600.0 for j in js]
+                  for lim, js in groups.items()}
+        refs = {lim: lim / 3600.0 for lim in groups}
+        xlabel = "hours"
+
+    flat = [v for vals in series.values() for v in vals]
+    if not flat:
+        ax.text(0.5, 0.5, "no data", ha="center", va="center",
+                transform=ax.transAxes, color="gray")
+        ax.set_xlabel(xlabel)
+        return
+
+    edges = _edges(flat, bins, pad_to=100.0 if as_fraction else max(refs.values()))
+
+    for lim, values in series.items():
+        if not values:
+            continue
+        color = colors[lim]
+        ax.hist(values, bins=edges, alpha=0.55, color=color,
+                edgecolor=color, linewidth=0.6,
+                label=f"{fmt_hms(lim).strip()}  (n={len(values)})")
+        if not as_fraction:
+            ax.axvline(refs[lim], color=color, ls="--", lw=1.6)
+
+    if as_fraction:
+        ax.axvline(100.0, color="crimson", ls="--", lw=1.4, label="100 %")
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("jobs")
+    if legend:
+        ax.legend(fontsize=8, title="requested --time", title_fontsize=8)
+
+
+def make_walltime_plots(pool, out_dir, prefix):
+    """One walltime figure per requested --time value.
+
+    Same content as the overview panel but with a single limit, so the x axis
+    is not stretched by the longest-running dataset.
+    """
+    plt = _pyplot()
+    if plt is None:
+        return []
+
+    groups = limit_groups(pool)
+    if not groups:
+        return []
+    colors = limit_colors(plt, list(groups))
+
+    paths = []
+    for lim, jobs in groups.items():
+        one = {lim: jobs}
+        fig, (ax_h, ax_p) = plt.subplots(1, 2, figsize=(13, 4.8))
+
+        plot_walltime_by_limit(ax_h, one, colors, legend=False)
+        ax_h.set_title("Walltime (Elapsed)", fontsize=11)
+        ax_h.axvline(lim / 3600.0, color=colors[lim], ls="--", lw=1.6,
+                     label=f"limit {fmt_hms(lim).strip()}")
+
+        elapsed = [j["elapsed_s"] for j in jobs]
+        med, p99 = percentile(elapsed, 50), percentile(elapsed, 99)
+        ax_h.axvline(med / 3600.0, color="darkgreen", lw=1.2,
+                     label=f"median {fmt_hms(med).strip()}")
+        ax_h.legend(fontsize=8)
+
+        plot_walltime_by_limit(ax_p, one, colors, as_fraction=True, legend=False)
+        ax_p.set_title("Walltime used / requested", fontsize=11)
+        ax_p.axvline(100.0, color="crimson", ls="--", lw=1.4)
+
+        # How close the tail runs to the wall — that is what turns into TIMEOUTs.
+        near = sum(1 for j in jobs if (j["time_eff"] or 0) >= 80.0)
+        fig.suptitle(
+            f"requested --time {fmt_hms(lim).strip()}  —  {len(jobs)} jobs  |  "
+            f"median {fmt_hms(med).strip()}, p99 {fmt_hms(p99).strip()} "
+            f"({p99 / lim * 100:.0f} % of limit)  |  "
+            f"{near} job(s) above 80 % of limit",
+            fontsize=11)
+        fig.tight_layout()
+
+        path = os.path.join(out_dir, f"{prefix}_walltime_{limit_label(lim)}.png")
+        fig.savefig(path, dpi=110)
+        plt.close(fig)
+        paths.append(path)
+        print(f"Saved {path}")
+
+    return paths
 
 
 def make_status_plot(jobs, out_dir, prefix):
@@ -494,17 +650,19 @@ def make_plots(pool, out_dir, prefix):
             ax.axvline(v, color="crimson", ls="--", lw=1.2,
                        label=label if i == 0 else None)
 
+    # The two walltime panels are drawn separately: they are split by requested
+    # --time so a campaign with a different limit per energy stays readable.
+    groups = limit_groups(pool)
+    colors = limit_colors(plt, list(groups))
+
     panels = [
         ("Peak memory (MaxRSS)", "GB",
          [j["max_rss_gb"] for j in pool if j["max_rss_gb"]],
          [j["req_mem_gb"] for j in pool if j["req_mem_gb"]], "requested"),
         ("Memory used / requested", "%",
          [j["mem_eff"] for j in pool if j["mem_eff"] is not None], [100.0], "100 %"),
-        ("Walltime (Elapsed)", "hours",
-         [j["elapsed_s"] / 3600.0 for j in pool if j["elapsed_s"]],
-         [j["timelimit_s"] / 3600.0 for j in pool if j["timelimit_s"]], "time limit"),
-        ("Walltime used / requested", "%",
-         [j["time_eff"] for j in pool if j["time_eff"] is not None], [100.0], "100 %"),
+        None,                                   # Walltime (Elapsed)
+        None,                                   # Walltime used / requested
         ("CPU time (TotalCPU)", "hours",
          [j["total_cpu_s"] / 3600.0 for j in pool if j["total_cpu_s"]], [], None),
         ("CPU efficiency", "%",
@@ -512,7 +670,15 @@ def make_plots(pool, out_dir, prefix):
     ]
 
     fig, axes = plt.subplots(2, 3, figsize=(16, 9))
-    for ax, (title, unit, values, refs, ref_label) in zip(axes.flat, panels):
+    plot_walltime_by_limit(axes.flat[2], groups, colors)
+    axes.flat[2].set_title("Walltime (Elapsed), by requested --time", fontsize=11)
+    plot_walltime_by_limit(axes.flat[3], groups, colors, as_fraction=True)
+    axes.flat[3].set_title("Walltime used / requested", fontsize=11)
+
+    for ax, panel in zip(axes.flat, panels):
+        if panel is None:
+            continue
+        title, unit, values, refs, ref_label = panel
         if values:
             ax.hist(values, bins=40, color="steelblue", edgecolor="k", lw=0.4)
             if refs:
@@ -612,6 +778,7 @@ def main():
     if not args.no_plot:
         make_status_plot(jobs, args.out_dir, args.prefix)
         make_plots(pool, args.out_dir, args.prefix)
+        make_walltime_plots(pool, args.out_dir, args.prefix)
     if args.csv:
         write_csv(jobs, os.path.join(args.out_dir, f"{args.prefix}_jobs.csv"))
 
