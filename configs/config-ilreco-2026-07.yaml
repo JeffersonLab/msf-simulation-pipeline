@@ -50,6 +50,10 @@ energies: [0.5, 1, 2, 3, 5, 10, 20]
 
 profiles:                       # 90-create-emcal-profile-jobs.py
   output: "${base_dir}/profiles/${energy}"    # partial npz in ${output}/partials/
+  # per-job scratch for the raw calsim CSVs (~1 GB/job, deleted at job end).
+  # Explicit path on purpose: NOT /tmp (admin requirement) and NOT $PWD -
+  # slurm jobs inherit the submit directory as cwd (littered the repo once)
+  scratch: "${profiles.output}/scratch"
   particle: gamma
   impact_step: 1                # gun-position scan step, 0.01-cell units
   impact_max: 50                # scan cell center (0) -> cell corner (50 = half

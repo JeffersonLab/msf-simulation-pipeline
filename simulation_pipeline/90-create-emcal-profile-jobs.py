@@ -35,17 +35,17 @@ CONTAINER_TEMPLATE = textwrap.dedent("""\
 
     source $GEANT4_INS_PATH/bin/geant4.sh
 
-    # Scratch MUST NOT be /tmp - not in slurm jobs and not interactively on
-    # ifarm nodes (admin requirement). Slurm starts the job in a per-job
-    # working dir on node-local disk that it accounts and cleans up - write
-    # there. Interactive runs (run_local.sh) use $PWD/tmp/.
-    if [ -n "${{SLURM_JOB_ID:-}}" ]; then
-        SCRATCH="$PWD/{basename}"
-    else
-        SCRATCH="$PWD/tmp/{basename}"
-    fi
+    # Per-job scratch for the raw calsim CSVs (~1 GB, deleted at job end).
+    # NOT /tmp (farm admin requirement) and NOT $PWD: slurm jobs inherit the
+    # submit directory as cwd, which littered the repo the jobs were submitted
+    # from. Leftovers from killed jobs are safe to delete wholesale.
+    SCRATCH="{scratch_dir}/{basename}"
     mkdir -p "$SCRATCH" "$(dirname {output_file})"
     trap 'rm -rf "$SCRATCH"' EXIT
+    # bash skips the EXIT trap on untrapped fatal signals; slurm sends TERM on
+    # walltime/scancel - route it (and INT/HUP) into a normal exit so cleanup runs.
+    # Only SIGKILL (OOM, kill -9) can still leave a scratch dir behind.
+    trap 'exit 143' TERM INT HUP
 
     calsim --crystals-nx {crystals_nx} --crystals-ny {crystals_nx} \\
         --crystal-side-mm {crystal_side_mm} --crystal-length-mm {crystal_length_mm} \\
@@ -128,6 +128,7 @@ def process_energy(config, energy, config_path):
 
     def params_updater(params):
         params.update(jobs[os.path.basename(params["input_file"])])
+        params["scratch_dir"] = str(prof.scratch)
         return params
 
     runner = JobCreator(
