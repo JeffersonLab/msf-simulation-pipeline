@@ -144,6 +144,11 @@ class JobCreator:
             farm_out_dir = f"/farm_out/{os.environ.get('USER', 'unknown')}"
         self.config['logs_dir'] = os.path.join(
             os.path.abspath(farm_out_dir), self.config['output_dir'].lstrip('/'))
+        # farm_out is auto-purged after a few days; every job gzip-copies its
+        # own SLURM log/err here (next to jobs/) at exit, so post-mortems of
+        # failed productions survive the purge. One small write at job end -
+        # not the streaming-to-/work pattern the admins forbid.
+        self.config['saved_logs_dir'] = os.path.join(self.config['output_dir'], 'logs')
         self.config['bind_dirs'] = [os.path.abspath(binddir) for binddir in bind_dirs]
         self.config['events'] = events
         self.config['container'] = container
@@ -196,14 +201,25 @@ class JobCreator:
         #SBATCH --mem-per-cpu={slurm_mem_per_cpu}
         #SBATCH --output={log_file}
         #SBATCH --error={err_file}
-        
+
         set -e
-        
+
+        # farm_out logs are purged after a few days: gzip-copy them next to the
+        # job scripts at exit so failures stay diagnosable. Runs on normal exit
+        # and on TERM (walltime/scancel); only SIGKILL leaves no copy.
+        save_logs() {{
+            mkdir -p "{saved_logs_dir}"
+            gzip -c "{log_file}" > "{saved_logs_dir}/{basename}.slurm.log.gz" 2>/dev/null || true
+            gzip -c "{err_file}" > "{saved_logs_dir}/{basename}.slurm.err.gz" 2>/dev/null || true
+        }}
+        trap save_logs EXIT
+        trap 'exit 143' TERM INT HUP
+
         echo "Starting job for {basename} at $(date)"
         echo "Running on: $(hostname)"
-        
+
         singularity exec {bindings} {container} {container_script}
-        
+
         echo "Job finished at $(date)"
         """)
 
@@ -238,6 +254,7 @@ class JobCreator:
         os.makedirs(self.config['output_dir'], exist_ok=True)
         os.makedirs(self.config['jobs_dir'], exist_ok=True)
         os.makedirs(self.config['logs_dir'], exist_ok=True)
+        os.makedirs(self.config['saved_logs_dir'], exist_ok=True)
 
 
     def write_container_script(self, input_file: str) -> str:
@@ -268,6 +285,7 @@ class JobCreator:
             'slurm_mem_per_cpu': self.config['slurm_mem_per_cpu'],
             'log_file': os.path.join(self.config['logs_dir'], f"{basename}.slurm.log"),
             'err_file': os.path.join(self.config['logs_dir'], f"{basename}.slurm.err"),
+            'saved_logs_dir': self.config['saved_logs_dir'],
             'container': self.config['container'],
             'container_script': container_script,
             'bindings': bindings,  # Fixed: was 'bind_dir'
@@ -311,6 +329,19 @@ class JobCreator:
 
         # No `set -e`: one failing file must not abort the rest of the chunk.
         set -uo pipefail
+
+        # farm_out logs are purged after a few days: gzip-copy this task's
+        # log/err next to the job scripts at exit (normal end, walltime TERM,
+        # scancel; only SIGKILL leaves no copy).
+        save_logs() {{
+            mkdir -p "{saved_logs_dir}"
+            gzip -c "{logs_dir}/array_${{SLURM_ARRAY_JOB_ID}}_${{SLURM_ARRAY_TASK_ID}}.slurm.log" \\
+                > "{saved_logs_dir}/array_${{SLURM_ARRAY_JOB_ID}}_${{SLURM_ARRAY_TASK_ID}}.slurm.log.gz" 2>/dev/null || true
+            gzip -c "{logs_dir}/array_${{SLURM_ARRAY_JOB_ID}}_${{SLURM_ARRAY_TASK_ID}}.slurm.err" \\
+                > "{saved_logs_dir}/array_${{SLURM_ARRAY_JOB_ID}}_${{SLURM_ARRAY_TASK_ID}}.slurm.err.gz" 2>/dev/null || true
+        }}
+        trap save_logs EXIT
+        trap 'exit 143' TERM INT HUP
 
         FILES_PER_JOB={files_per_job}
         TASK=$((SLURM_ARRAY_TASK_ID + ${{OFFSET:-0}}))
@@ -385,6 +416,7 @@ class JobCreator:
             slurm_mem_per_cpu=self.config['slurm_mem_per_cpu'],
             job_name=self.config['beam_config'] or 'jobs',
             logs_dir=self.config['logs_dir'],
+            saved_logs_dir=self.config['saved_logs_dir'],
             list_file=list_file,
             bindings=bindings,
             container=self.config['container'],
