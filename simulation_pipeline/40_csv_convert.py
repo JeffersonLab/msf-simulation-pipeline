@@ -11,6 +11,21 @@ for every input ROOT file, emits a job that runs the stage's converter macros:
     csv_eicrecon:
       macros: [edm4eic_mc_dis, edm4eic_reco_particles, ...]
 
+A stage may declare a `paired` block: every input gets a same-stem
+companion file (reco + its simulation file). Three macro lists say which
+input(s) each macro receives:
+
+    csv_background:
+      input:   "${eicrecon.output}"
+      pattern: "*.edm4eic.root"
+      paired:  { dir: "${npsim.output}", suffix: ".edm4hep.root" }
+      macros:        [edm4eic_trk_hits, ...]   # macro(input, out)
+      sim_macros:    [edm4hep_acceptance_ppim] # macro(paired, out)
+      paired_macros: [edm4eic_cal_hits]        # macro(input, paired, out)
+
+Inputs whose paired file is missing are skipped at job-build time with a
+warning.
+
 Each macro `<name>` is `csv_convert/<name>.cxx` with a ROOT entry function of
 the same name, called as `<name>("input.root", "output.csv")`. The output CSV
 is `<output>/<input-basename>.<role>.csv`, where <role> is the macro name minus
@@ -57,11 +72,14 @@ cd "{csv_convert_dir}"
 rc=0
 
 convert() {{
-  local label="$1" macro="$2" out="$3"
+  local label="$1" macro="$2" out="$3"; shift 3
+  # Remaining args are the macro's input file(s) -> ROOT call arguments.
+  local in_args="" f
+  for f in "$@"; do in_args="${{in_args}}\\"$f\\","; done
   # Regenerate when the CSV is missing OR empty (-s: exists and non-empty).
   if [ ! -s "$out" ]; then
     echo "[RUN] $label via $macro"
-    if ! root -x -l -b -q "$macro(\\"{input_file}\\",\\"$out\\")"; then
+    if ! root -x -l -b -q "$macro(${{in_args}}\\"$out\\")"; then
       echo "[WARN] $label: macro returned non-zero"; rc=1
     fi
     # A crashed macro leaves a 0-byte file; drop it so it is retried next run.
@@ -103,17 +121,38 @@ def input_stem(input_file):
     return name
 
 
-def build_script_template(macros):
-    """The full container script with one convert() call per macro."""
-    calls = [f'convert "{macro_role(m)}" "{m}.cxx" "{{out_{macro_role(m)}}}"' for m in macros]
-    return SCRIPT_HEAD + "\n".join(calls) + "\n" + SCRIPT_FOOT
+def build_script_template(macros, sim_macros=(), paired_macros=(), paired=False):
+    """The full container script with one convert() call per macro.
+
+    Macro classes differ only in which input file(s) each call receives:
+      macros        — the stage's input file (the reco file for csv stages)
+      sim_macros    — the paired file alone (converters that read simulation)
+      paired_macros — both files, e.g. edm4eic_cal_hits(reco, sim, out)
+    """
+    head = SCRIPT_HEAD
+    if paired:
+        head = head.replace(
+            'echo "  Macros dir: {csv_convert_dir}"',
+            'echo "  Paired: {paired_file}"\n'
+            'echo "  Macros dir: {csv_convert_dir}"')
+    calls = []
+    for m in macros:
+        calls.append(f'convert "{macro_role(m)}" "{m}.cxx" "{{out_{macro_role(m)}}}" "{{input_file}}"')
+    for m in sim_macros:
+        calls.append(f'convert "{macro_role(m)}" "{m}.cxx" "{{out_{macro_role(m)}}}" "{{paired_file}}"')
+    for m in paired_macros:
+        calls.append(f'convert "{macro_role(m)}" "{m}.cxx" "{{out_{macro_role(m)}}}" '
+                     f'"{{input_file}}" "{{paired_file}}"')
+    return head + "\n".join(calls) + "\n" + SCRIPT_FOOT
 
 
 def build_creator(stage, config, card):
     """One JobCreator per card: run the stage's macros over the card's files."""
     scfg = config[stage]
     macros = list(scfg.get("macros", []))
-    if not macros:
+    sim_macros = list(scfg.get("sim_macros", []))
+    paired_macros = list(scfg.get("paired_macros", []))
+    if not (macros or sim_macros or paired_macros):
         raise SystemExit(f"Config '{stage}.macros' is empty -- nothing to convert.")
     csv_convert_dir = str(config.get("csv_convert_dir", CSV_CONVERT_DIR_DEFAULT))
 
@@ -123,16 +162,44 @@ def build_creator(stage, config, card):
 
     output_dir = card.get("output") or str(scfg.output)
 
+    # Paired stage: every input gets a same-stem companion file from
+    # paired.dir + stem + paired.suffix, passed to the macros as a second
+    # argument. Inputs whose companion is missing are dropped HERE, loudly —
+    # a missing pair must surface at job-build time, not as a farm crash.
+    paired_cfg = scfg.get("paired", None)
+    if (sim_macros or paired_macros) and paired_cfg is None:
+        raise SystemExit(f"'{stage}' lists sim_macros/paired_macros but has no "
+                         f"'paired: {{dir, suffix}}' block")
+    input_files = list(card["files"])
+    if paired_cfg is not None:
+        paired_dir = str(paired_cfg["dir"])
+        paired_suffix = str(paired_cfg["suffix"])
+        if paired_dir not in bind_dirs:
+            bind_dirs.append(paired_dir)
+        kept, missing = [], []
+        for f in input_files:
+            pair = os.path.join(paired_dir, input_stem(f) + paired_suffix)
+            (kept if os.path.exists(pair) else missing).append(f)
+        for f in missing:
+            print(f"[WARN] no paired file for {os.path.basename(f)} "
+                  f"(expected {input_stem(f)}{paired_suffix} in {paired_dir}) -- skipped")
+        if not kept:
+            raise SystemExit(f"'{stage}': no input has a paired file in {paired_dir}")
+        input_files = kept
+
     def add_csv_paths(params):
         stem = input_stem(params["input_file"])
         params["csv_convert_dir"] = csv_convert_dir
-        for m in macros:
+        if paired_cfg is not None:
+            params["paired_file"] = os.path.join(str(paired_cfg["dir"]),
+                                                 stem + str(paired_cfg["suffix"]))
+        for m in macros + sim_macros + paired_macros:
             role = macro_role(m)
             params[f"out_{role}"] = os.path.join(params["output_dir"], f"{stem}.{role}.csv")
         return params
 
     runner = JobCreator(
-        input_files=list(card["files"]),
+        input_files=input_files,
         output_file_name_func=lambda input_file, output_dir: output_dir,
         output_dir=output_dir,
         bind_dirs=bind_dirs,
@@ -143,7 +210,8 @@ def build_creator(stage, config, card):
         slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
         farm_out_dir=config.get("farm_out_dir"),
     )
-    runner.container_script_template = build_script_template(macros)
+    runner.container_script_template = build_script_template(
+        macros, sim_macros, paired_macros, paired=paired_cfg is not None)
     runner.container_script_params_updater = add_csv_paths
     runner.run()
     return runner

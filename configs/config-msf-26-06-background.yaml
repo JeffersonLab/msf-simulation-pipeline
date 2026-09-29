@@ -1,0 +1,79 @@
+# Meson Structure + ePIC background cocktails — June 2026 campaign,
+# CSV re-conversion September 2026 with the current converter set.
+#
+# Sim and reco already exist (dd4hep-background / reco-background); only the
+# csv_background stage runs:
+#   python -m simulation_pipeline.generate_datasets csv_background -c this.yaml
+#   python simulation_pipeline/40_csv_convert.py csv_background -c this.yaml
+#
+# cal_hits is a PAIRED macro: the reco output carries no calorimeter
+# hit<->MCParticle associations, so it joins each reco file with its
+# same-stem dd4hep file by (event, cellID). Events are aligned (the campaign
+# eicrecon ran single-threaded); the macro verifies EventHeader.eventNumber
+# per frame and aborts on mismatch.
+#
+# Deliberately NOT converted here: mc_particles (hit CSVs embed the prt_*
+# block — regenerate per file for debugging only, ~14 GB zipped per file),
+# comb_candidates + lambda_acceptance (campaign reco has empty B0 track
+# collections), the edm4hep_* sim macros, and reco_dis + reco_ff_lambda
+# (both search MCParticles for beam protons and find none in
+# background-merged frames — "No beam proton found, skipping" every event,
+# empty CSVs; verified on the test job 12021711).
+
+base_dir: "/work/eic3/users/romanov/meson-structure-2026-06"
+
+# Container image and directories bound inside it
+container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.06.0-stable"
+bind_dirs:
+  - "${base_dir}"
+
+energies:
+  - "10x100"
+  - "10x130"
+  - "18x275"
+
+# Events per input file (5000-frame background files)
+event_count: 5000
+
+# SLURM stdout/stderr base (admin requirement: NEVER /work — farm jobs
+# streaming logs there overload the work file server).
+farm_out_dir: "/farm_out/romanov"
+
+# Memory per CPU. Measured on the full-file test job (12021711): MaxRSS
+# 4.2 GB over all 8 macros; 4.2 x 1.3 -> 6G (farm bills 3 CPUs at 2G/CPU).
+slurm_mem_per_cpu: "6G"
+
+# generate_datasets writes cards under <datasets_dir>/<stage>/
+datasets_dir: "${base_dir}/datasets-background"
+
+# Files per SLURM array task. Each file is ~22 GB and every macro re-reads
+# it (measured: ~1 h for cal_hits alone, several hours for all 8 macros),
+# so one file per task.
+slurm_files_per_job: 1
+
+# ---- stages ------------------------------------------------------------------
+# The sim/reco stages exist only as path anchors; their data is already there.
+
+npsim_background:
+  output: "${base_dir}/dd4hep-background/${energy}"
+
+eicrecon:
+  input:   "${npsim_background.output}"
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/reco-background/${energy}"
+
+csv_background:                                     # 40_csv_convert.py csv_background
+  input:   "${eicrecon.output}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${npsim_background.output}"
+    suffix: ".edm4hep.root"
+  output:  "${base_dir}/csv-2026-09-background/${energy}"
+  macros:
+    - edm4eic_mc_dis
+    - edm4eic_mcpart_lambda
+    - edm4eic_reco_particles
+    - edm4eic_calo_clusters
+    - edm4eic_trk_hits
+  paired_macros:
+    - edm4eic_cal_hits

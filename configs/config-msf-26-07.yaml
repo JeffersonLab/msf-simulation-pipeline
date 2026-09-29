@@ -101,3 +101,16 @@ csv_eicrecon:                                       # 40_csv_convert.py csv_eicr
     #                      B0 candidates need the eicrecon.flags above + patch
     - edm4eic_lambda_acceptance
     - edm4eic_comb_candidates
+
+csv_cal:                                            # 40_csv_convert.py csv_cal
+  # Paired stage: each macro gets the reco file AND its same-stem dd4hep file.
+  # edm4eic_cal_hits joins rec hits to sim cells by (event, cellID) — the reco
+  # output carries no calorimeter hit associations, the sim file has the truth.
+  input:   "${eicrecon.output}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${npsim.output}"
+    suffix: ".edm4hep.root"
+  output:  "${base_dir}/csv-cal/${energy}"
+  macros:
+    - edm4eic_cal_hits
