@@ -22,10 +22,20 @@
 
 base_dir: "/work/eic3/users/romanov/meson-structure-2026-06"
 
-# Container image and directories bound inside it
+# Container image and directories bound inside it. /scratch is the compute
+# node's local disk: jobs stage their inputs there (admin requirement after
+# the 2026-09-29 cancellation — streaming from the work file server took
+# nodes offline) and write outputs there before one final move to /work.
 container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.06.0-stable"
 bind_dirs:
   - "${base_dir}"
+  - "/scratch"
+
+# Max array tasks running at once. Admin limit on the account is 10 running
+# jobs (2026-09-29); 8 leaves room for a test job. Even without the limit,
+# concurrency this low keeps the staging copies from re-creating the
+# file-server contention.
+slurm_array_throttle: 8
 
 energies:
   - "10x100"

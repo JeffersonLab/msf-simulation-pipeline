@@ -176,3 +176,36 @@ void edm4eic_lambda_acceptance(const char* infile, const char* outfile, int even
     csv.close();
     fmt::print("edm4eic_lambda_acceptance: {} events -> {}\n", n_evt, outfile);
 }
+
+//------------------------------------------------------------------------------
+// main function entry point (standalone application), same pattern as the other converters
+//------------------------------------------------------------------------------
+#include <vector>
+#include <cstdlib>
+int main(int argc, char* argv[]) {
+    std::vector<std::string> infiles;
+    std::string out_name = "lambda_acceptance.csv";
+    int events_limit = -1;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "-n" && i + 1 < argc) events_limit = std::atoi(argv[++i]);
+        else if (a == "-o" && i + 1 < argc) out_name = argv[++i];
+        else if (a == "-h" || a == "--help") {
+            fmt::print("usage: {} [-n N] [-o file] input1.root\n", argv[0]);
+            return 0;
+        }
+        else if (!a.empty() && a[0] != '-') infiles.emplace_back(a);
+        else {
+            fmt::print(stderr, "unknown option {}\n", a);
+            return 1;
+        }
+    }
+    if (infiles.empty()) {
+        fmt::print(stderr, "error: no input files\n");
+        return 1;
+    }
+
+    edm4eic_lambda_acceptance(infiles[0].c_str(), out_name.c_str(), events_limit);
+    return 0;
+}

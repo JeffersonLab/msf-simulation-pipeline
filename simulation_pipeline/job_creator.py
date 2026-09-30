@@ -120,6 +120,7 @@ class JobCreator:
                  slurm_partition: str = 'production',
                  slurm_array_chunk: int = 10000,  # farm MaxArraySize = 10001
                  slurm_files_per_job: int = 1,    # files/array task; 1 = one job per file (CSV stages override)
+                 slurm_array_throttle: int = 0,   # max SIMULTANEOUS array tasks (%N); 0 = no limit
                  farm_out_dir: str = None,        # SLURM stdout/stderr base; default /farm_out/$USER
                  ):
         """Initialize JobCreator with configuration."""
@@ -165,6 +166,10 @@ class JobCreator:
         # still a separate singularity+converter invocation, so one bad file only
         # warns and the rest of the chunk continues.
         self.config['slurm_files_per_job'] = max(1, int(slurm_files_per_job))
+        # %N concurrency cap on array submissions. The farm cancels campaigns
+        # whose concurrent tasks saturate the work file server; this caps how
+        # many tasks run at once regardless of how many are queued.
+        self.config['slurm_array_throttle'] = max(0, int(slurm_array_throttle))
         self.config['beam_config'] = beam_config
 
         # Store output filename function
@@ -469,10 +474,12 @@ class JobCreator:
             f"echo \"  logs:   {self.config['logs_dir']}\"",
             ""
         ]
+        throttle = self.config['slurm_array_throttle']
+        throttle_spec = f"%{throttle}" if throttle else ""
         for offset in range(0, n_tasks, chunk):
             last = min(chunk, n_tasks - offset) - 1
             script_lines.append(
-                f"sbatch --array=0-{last} --export=ALL,OFFSET={offset} {array_script}")
+                f"sbatch --array=0-{last}{throttle_spec} --export=ALL,OFFSET={offset} {array_script}")
 
         script_lines.append("")
         script_lines.append(

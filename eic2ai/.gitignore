@@ -1,0 +1,3 @@
+# CMake build directories (one per container image)
+build*/
+cmake-build-*/
