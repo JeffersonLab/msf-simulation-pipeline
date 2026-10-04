@@ -1,17 +1,18 @@
 // writer_RecoDisWriter.hpp — CSV role "reco_dis": one row per event with reconstructed and true DIS kinematics.
 //
-// Needs: reco. Collections read: the six InclusiveKinematics* collections (one method each),
+// Needs: reco. Collections read: the seven InclusiveKinematics* collections (one method each),
 // MCParticles (beam proton, beam and scattered electron, the Λ), ReconstructedLambdas (the
 // far-forward Λ) and, through the electron method's scat relation, the reconstructed electron.
-// Columns: event; x, q2, y, nu, w per method (da, esigma, electron, jb, ml, sigma); the true
+// Columns: event; x, q2, y, nu, w per method (da, esigma, electron, jb, ml, sigma, truth); the true
 // mc_* values from the generator's frame parameters; Mandelstam t of the Λ against the true
 // and the assumed beam proton; the reconstructed electron; MC momenta of the scattered
 // electron, the Λ, the far-forward Λ, the beam proton and the beam electron.
 //
 // An event without a beam proton among MCParticles yields no row (the macro's behavior;
 // background-merged frames have none). Port of csv_convert/edm4eic_reco_dis.cxx; rows are
-// byte-identical to the macro's, the header follows column_renames.py (evt, elec_index,
-// *_mom_x, *_ref_pos_x; the seven parallel kinematics blocks keep their names). Trap: the 30
+// byte-identical to the macro's except the added truth_* block, the header follows
+// column_renames.py (evt, elec_index,
+// *_mom_x, *_ref_pos_x; the parallel kinematics blocks keep their names). Trap: the 35
 // kinematics columns use ostream formatting
 // (stream_text, 6 significant digits); every other number uses fmt. The four-vector arithmetic
 // repeats TLorentzVector's inline formulas term by term, which the parity gate checks.
@@ -86,7 +87,10 @@ private:
     }
 
     /// The beam proton as an experiment would assume it: the nominal momentum of the running
-    /// mode closest to the true beam (41, 100, 130 or 275 GeV/c) with the crossing angles applied.
+    /// mode closest to the true beam (41, 100, 130 or 275 GeV/c) with the crossing angles
+    /// applied. Unset when no mode is within 10 GeV (a wrongly-picked proton in a merged
+    /// frame): the t-against-assumed-beam columns stay empty and the row survives — a throw
+    /// here would discard the whole role for the file.
     static FourVector approximate_beam_proton(const FourVector& true_beam_proton) {
         const double true_momentum = true_beam_proton.momentum();
         double nominal_momentum = 0.0;
@@ -94,7 +98,7 @@ private:
             if (std::abs(true_momentum - mode) < 10) nominal_momentum = mode;
         }
         if (nominal_momentum == 0.0) {
-            throw std::runtime_error("Could not find nominal proton beam mode");
+            return FourVector{};
         }
         constexpr double crossing_angle_horizontal = 25e-3;   // rad
         constexpr double crossing_angle_vertical = 100e-6;    // rad
@@ -105,30 +109,46 @@ private:
     }
 
     struct McKinematics {
-        FourVector beam_proton;         // the first proton
-        FourVector beam_electron;       // the first electron
-        FourVector scattered_electron;  // the second electron
+        FourVector beam_proton;         // the first generatorStatus-4 proton, else the first proton
+        FourVector beam_electron;       // the first generatorStatus-4 electron, else the first electron
+        FourVector scattered_electron;  // the first electron after the beam electron
         FourVector lambda;              // the first Λ; the scan stops there
     };
 
+    /// Beam particles carry generatorStatus 4 (HepMC convention). Preferring it over "first of
+    /// its PDG" matters in background-merged pythia8 frames, where final-state protons and
+    /// electrons can precede the beams in the collection; in the meson-structure files the
+    /// beams come first anyway, so the selection is unchanged there.
     static McKinematics find_mc_particles(const edm4hep::MCParticleCollection& particles) {
         McKinematics found;
+        bool beam_proton_is_beam_status = false, beam_electron_is_beam_status = false;
         bool found_beam_proton = false, found_beam_electron = false, found_scattered_electron = false;
         for (const auto& particle : particles) {
             const auto momentum = particle.getMomentum();
-            if (!found_beam_proton && particle.getPDG() == 2212) {
+            const bool beam_status = particle.getGeneratorStatus() == 4;
+            if (particle.getPDG() == 2212
+                && (!found_beam_proton || (beam_status && !beam_proton_is_beam_status))) {
                 found.beam_proton = four_vector(momentum.x, momentum.y, momentum.z, proton_mass);
                 found_beam_proton = true;
+                beam_proton_is_beam_status = beam_status;
             }
-            if (!found_beam_electron && particle.getPDG() == 11) {
-                found.beam_electron = four_vector(momentum.x, momentum.y, momentum.z, electron_mass);
-                found_beam_electron = true;
-            } else if (found_beam_electron && !found_scattered_electron && particle.getPDG() == 11) {
-                found.scattered_electron = four_vector(momentum.x, momentum.y, momentum.z, electron_mass);
-                found_scattered_electron = true;
+            if (particle.getPDG() == 11) {
+                if (!found_beam_electron || (beam_status && !beam_electron_is_beam_status)) {
+                    found.beam_electron = four_vector(momentum.x, momentum.y, momentum.z, electron_mass);
+                    found_beam_electron = true;
+                    beam_electron_is_beam_status = beam_status;
+                    found_scattered_electron = false;   // scattered = first electron after the beam
+                } else if (!found_scattered_electron) {
+                    found.scattered_electron = four_vector(momentum.x, momentum.y, momentum.z, electron_mass);
+                    found_scattered_electron = true;
+                }
             }
-            if (particle.getPDG() == 3122) {
+            if (particle.getPDG() == 3122 && !found.lambda.set()) {
                 found.lambda = four_vector(momentum.x, momentum.y, momentum.z, lambda_mass);
+            }
+            // The scan stops at the first Λ once the other particles are in hand. In merged
+            // pythia8 frames a Λ can precede the beams; stopping there would lose the row.
+            if (found.lambda.set() && found_beam_proton && found_beam_electron && found_scattered_electron) {
                 break;
             }
         }
@@ -144,6 +164,8 @@ private:
             {"jb", "InclusiveKinematicsJB"},
             {"ml", "InclusiveKinematicsML"},
             {"sigma", "InclusiveKinematicsSigma"},
+            {"truth", "InclusiveKinematicsTruth"},   // EICrecon's true-MC kinematics; the only
+                                                     // true Q2/x source on files without dis_* params
         };
         return methods;
     }
@@ -181,7 +203,8 @@ private:
         }
         const FourVector assumed_beam_proton = approximate_beam_proton(mc.beam_proton);
         const double mc_lambda_t_true_beam = mc.lambda.set() ? mandelstam_t(mc.beam_proton, mc.lambda) : 0.0;
-        const double mc_lambda_t_assumed_beam = mc.lambda.set() ? mandelstam_t(assumed_beam_proton, mc.lambda) : 0.0;
+        const double mc_lambda_t_assumed_beam = mc.lambda.set() && assumed_beam_proton.set()
+            ? mandelstam_t(assumed_beam_proton, mc.lambda) : 0.0;
 
         FourVector ff_lambda;
         const auto* ff_lambdas = get_optional_collection<edm4eic::ReconstructedParticleCollection>(reco, "ReconstructedLambdas");
@@ -192,7 +215,8 @@ private:
             ff_lambda = four_vector(momentum.x, momentum.y, momentum.z, lambda_mass);
         }
         const double ff_lambda_t_true_beam = ff_lambda.set() ? mandelstam_t(mc.beam_proton, ff_lambda) : 0.0;
-        const double ff_lambda_t_assumed_beam = ff_lambda.set() ? mandelstam_t(assumed_beam_proton, ff_lambda) : 0.0;
+        const double ff_lambda_t_assumed_beam = ff_lambda.set() && assumed_beam_proton.set()
+            ? mandelstam_t(assumed_beam_proton, ff_lambda) : 0.0;
 
         std::string line = fmt::format("{}", inputs.entry_index);
         const edm4eic::InclusiveKinematicsCollection* electron_method = nullptr;
@@ -212,9 +236,9 @@ private:
             line += "," + reco.getParameter<std::string>(key).value_or("");
         }
         line += "," + optional_number(mc.lambda.set(), mc_lambda_t_true_beam);
-        line += "," + optional_number(mc.lambda.set(), mc_lambda_t_assumed_beam);
+        line += "," + optional_number(mc.lambda.set() && assumed_beam_proton.set(), mc_lambda_t_assumed_beam);
         line += "," + optional_number(ff_lambda.set(), ff_lambda_t_true_beam);
-        line += "," + optional_number(ff_lambda.set(), ff_lambda_t_assumed_beam);
+        line += "," + optional_number(ff_lambda.set() && assumed_beam_proton.set(), ff_lambda_t_assumed_beam);
 
         if (electron_method && electron_method->size() == 1 && (*electron_method)[0].getScat().isAvailable()) {
             line += "," + electron_columns((*electron_method)[0].getScat());

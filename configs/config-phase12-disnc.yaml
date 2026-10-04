@@ -1,0 +1,77 @@
+# Phase 12 — DIS/NC class data for the event-type classifier.
+# ~40k frames of ePIC campaign 26.07.0 Bkg_Exact1S_2us DIS/NC 10x100
+# (99 events/file, exactly 1 signal per 2 us frame): 135 file pairs per
+# minQ2 slice (1, 10, 100 — minQ2=1000 is above the k-Lambda Q2 range),
+# staged from tape into /cache and symlinked into the campaign dirs by
+# disnc-2026-07-background/stage_and_link.sh. Spec: /work/trk_hit_bkg.md
+# Phase 12.
+#
+#   python -m simulation_pipeline.generate_datasets csv_phase12 -c this.yaml
+#   python simulation_pipeline/40_csv_convert.py csv_phase12 -c this.yaml
+#
+# The "energies" here are slice keys, not beam energies: all three are
+# 10x100, split by the sample's minimum Q2.
+
+base_dir: "/work/eic3/users/romanov/disnc-2026-07-background"
+
+# Campaign 26.07.0 files carry edm4eic schema 81000, unreadable by 26.06
+# containers (collections silently absent) — the container must match.
+container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.07.0-stable"
+bind_dirs:
+  - "${base_dir}"
+  - "/cache"          # campaign files are symlinks into /cache
+  - "/scratch"
+
+energies:
+  - "10x100_minQ2_1"
+  - "10x100_minQ2_10"
+  - "10x100_minQ2_100"
+
+# Events per input file (full conversion; campaign files hold 99 frames).
+event_count: 99
+
+farm_out_dir: "/farm_out/romanov"
+
+# Same eic2ai as phase 10; four writers stay well under the 2G default
+# (1.08 GB peak measured for ALL 15 writers on background events).
+slurm_mem_per_cpu: "2G"
+
+datasets_dir: "${base_dir}/datasets-phase12"
+slurm_files_per_job: 1
+# Admin limit on the account is 10 running jobs (2026-09-29).
+slurm_array_throttle: 8
+
+# One pair is ~1.2 GB plus small CSV outputs; 10G is generous. The
+# stage-in space guard adds staging_headroom_gb (default 25, sized for
+# 5000-event msf files) on top of each input's size — 3 GB covers the
+# ~0.3 GB of zipped CSVs here with a 10x margin.
+slurm_tmp_disk: "10G"
+staging_headroom_gb: 3
+
+# ---- converter -----------------------------------------------------------
+converter: "eic2ai"
+eic2ai_bin: "/work/eic3/users/romanov/optim/submodules/simulation-pipeline/eic2ai/build-eic_xl-26.07/eic2ai"
+eic2ai_args: ""
+
+# ---- stages --------------------------------------------------------------
+
+npsim_background:
+  output: "${base_dir}/dd4hep-background/${energy}"
+
+eicrecon:
+  input:   "${npsim_background.output}"
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/reco-background/${energy}"
+
+csv_phase12:                                        # 40_csv_convert.py csv_phase12
+  input:   "${eicrecon.output}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${npsim_background.output}"
+    suffix: ".edm4hep.root"
+  output:  "${base_dir}/csv-2026-09-phase12/${energy}"
+  roles:
+    - trk_hits
+    - cal_hits
+    - reco_dis
+    - event_index

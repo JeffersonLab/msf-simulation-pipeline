@@ -89,8 +89,13 @@ STAGING_BLOCK = """\
 # take nodes offline (campaign 2026-09 was cancelled for exactly this).
 # Inputs are copied ONCE to $STAGE_DIR, macros read the local copies, and
 # outputs are written locally and moved to the final directory at the end.
-STAGE_BASE="/scratch"
-[ -d "$STAGE_BASE" ] && [ -w "$STAGE_BASE" ] || STAGE_BASE="/tmp"
+# Slurm provides a per-job dir on the node's scratch volume (TMPDIR =
+# /scratch/slurm/<jobid>/...); bare /scratch is root-owned on JLab nodes and
+# /tmp is an 8 GB volume — both measured 2026-09-30.
+STAGE_BASE=""
+for cand in "${{TMPDIR:-}}" "/scratch/slurm/${{SLURM_JOB_ID:-none}}" "/scratch" "/tmp"; do
+  [ -n "$cand" ] && [ -d "$cand" ] && [ -w "$cand" ] && STAGE_BASE="$cand" && break
+done
 STAGE_DIR=$(mktemp -d "$STAGE_BASE/csvstage.XXXXXX") || {{ echo "[FATAL] cannot create staging dir under $STAGE_BASE"; exit 3; }}
 trap 'rm -rf "$STAGE_DIR"' EXIT
 echo "  Staging dir: $STAGE_DIR"
@@ -101,7 +106,7 @@ stage_in() {{
   # file server is the behavior the admins cancel jobs for.
   local src="$1" dst need avail
   dst="$STAGE_DIR/$(basename "$src")"
-  need=$(( $(stat -c%s "$src") / 1000000000 + 25 ))
+  need=$(( $(stat -c%s "$src") / 1000000000 + {staging_headroom_gb} ))
   avail=$(( $(df -Pk "$STAGE_DIR" | awk 'NR==2 {{print $4}}') / 1000000 ))
   if [ "$avail" -le "$need" ]; then
     echo "[FATAL] not enough staging space: need ~$need GB, avail $avail GB" >&2
@@ -295,6 +300,11 @@ def build_creator(stage, config, card):
         raise SystemExit(f"'{stage}.converter' must be macros or eic2ai, got {converter!r}")
     eic2ai_bin = str(scfg.get("eic2ai_bin", config.get("eic2ai_bin", "")))
     eic2ai_args = str(scfg.get("eic2ai_args", config.get("eic2ai_args", "")))
+    # Staging-space headroom for outputs + slack on top of each staged input's
+    # own size. The old hardcoded 25 GB fits 5000-event msf files; small-file
+    # campaigns (99 events/file) set this low so --tmp can stay small.
+    staging_headroom_gb = int(scfg.get("staging_headroom_gb",
+                                       config.get("staging_headroom_gb", 25)))
     if converter == "eic2ai" and not eic2ai_bin:
         raise SystemExit(f"'{stage}': converter eic2ai needs 'eic2ai_bin' (the binary's path as seen inside the container)")
     # The roles a job produces: the macro lists name them; an eic2ai stage may list them
@@ -346,6 +356,7 @@ def build_creator(stage, config, card):
             params[f"out_{role}"] = os.path.join(params["output_dir"], f"{stem}.{role}.csv")
         params["eic2ai_bin"] = eic2ai_bin
         params["eic2ai_args"] = eic2ai_args
+        params["staging_headroom_gb"] = staging_headroom_gb
         return params
 
     runner = JobCreator(
@@ -358,6 +369,7 @@ def build_creator(stage, config, card):
         beam_config=card.get("energy") or card["slug"],
         slurm_files_per_job=int(config.get("slurm_files_per_job", 20)),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
+        slurm_tmp_disk=str(config.get("slurm_tmp_disk", "")),
         slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
         farm_out_dir=config.get("farm_out_dir"),
     )

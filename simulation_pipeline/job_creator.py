@@ -121,6 +121,9 @@ class JobCreator:
                  slurm_array_chunk: int = 10000,  # farm MaxArraySize = 10001
                  slurm_files_per_job: int = 1,    # files/array task; 1 = one job per file (CSV stages override)
                  slurm_array_throttle: int = 0,   # max SIMULTANEOUS array tasks (%N); 0 = no limit
+                 slurm_tmp_disk: str = "",        # /scratch to request via --gres=disk:N (e.g. "100G"); "" = none.
+                                                  # JLab enforces this since 2026-02-17: without the gres a job's
+                                                  # per-job /scratch project quota is ~zero and staging fails ENOSPC.
                  farm_out_dir: str = None,        # SLURM stdout/stderr base; default /farm_out/$USER
                  ):
         """Initialize JobCreator with configuration."""
@@ -170,6 +173,10 @@ class JobCreator:
         # whose concurrent tasks saturate the work file server; this caps how
         # many tasks run at once regardless of how many are queued.
         self.config['slurm_array_throttle'] = max(0, int(slurm_array_throttle))
+        # Jobs that stage inputs to the node's local disk must land on nodes
+        # that HAVE that much: farm /scratch sizes vary (8 GB nodes exist)
+        # and a too-small node fails the job at its space guard.
+        self.config['slurm_tmp_disk'] = str(slurm_tmp_disk or "")
         self.config['beam_config'] = beam_config
 
         # Store output filename function
@@ -203,7 +210,7 @@ class JobCreator:
         #SBATCH --job-name={basename}
         #SBATCH --time={slurm_time}
         #SBATCH --cpus-per-task={slurm_cpus_per_task}
-        #SBATCH --mem-per-cpu={slurm_mem_per_cpu}
+        #SBATCH --mem-per-cpu={slurm_mem_per_cpu}{tmp_disk_line}
         #SBATCH --output={log_file}
         #SBATCH --error={err_file}
 
@@ -288,6 +295,8 @@ class JobCreator:
             'slurm_time': self.config['slurm_time'],
             'slurm_cpus_per_task': self.config['slurm_cpus_per_task'],
             'slurm_mem_per_cpu': self.config['slurm_mem_per_cpu'],
+            'tmp_disk_line': ("\n#SBATCH --gres=disk:" + self.config['slurm_tmp_disk'])
+                             if self.config['slurm_tmp_disk'] else "",
             'log_file': os.path.join(self.config['logs_dir'], f"{basename}.slurm.log"),
             'err_file': os.path.join(self.config['logs_dir'], f"{basename}.slurm.err"),
             'saved_logs_dir': self.config['saved_logs_dir'],
@@ -328,7 +337,7 @@ class JobCreator:
         #SBATCH --job-name={job_name}
         #SBATCH --time={slurm_time}
         #SBATCH --cpus-per-task={slurm_cpus_per_task}
-        #SBATCH --mem-per-cpu={slurm_mem_per_cpu}
+        #SBATCH --mem-per-cpu={slurm_mem_per_cpu}{tmp_disk_line}
         #SBATCH --output={logs_dir}/array_%A_%a.slurm.log
         #SBATCH --error={logs_dir}/array_%A_%a.slurm.err
 
@@ -419,6 +428,8 @@ class JobCreator:
             slurm_time=self.config['slurm_time'],
             slurm_cpus_per_task=self.config['slurm_cpus_per_task'],
             slurm_mem_per_cpu=self.config['slurm_mem_per_cpu'],
+            tmp_disk_line=("\n#SBATCH --gres=disk:" + self.config['slurm_tmp_disk'])
+                          if self.config['slurm_tmp_disk'] else "",
             job_name=self.config['beam_config'] or 'jobs',
             logs_dir=self.config['logs_dir'],
             saved_logs_dir=self.config['saved_logs_dir'],

@@ -1,0 +1,69 @@
+# 18x275 full-energy eic2ai conversion (all 107 files, 5000 events each,
+# roles trk_hits/cal_hits/reco_dis/event_index). Throttle %16 doubles as
+# the probe of whether the 2026-09-29 admin 10-job limit is still active
+# (user instruction 2026-10-03). Pair = 41 GB, 100G staging still fits.
+#
+#   python -m simulation_pipeline.generate_datasets csv_phase10 -c this.yaml
+#   python simulation_pipeline/40_csv_convert.py csv_phase10 -c this.yaml
+
+base_dir: "/work/eic3/users/romanov/meson-structure-2026-06"
+
+container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.06.0-stable"
+bind_dirs:
+  - "${base_dir}"
+  - "/scratch"
+
+energies:
+  - "18x275"
+
+# Events per input file (full conversion).
+event_count: 5000
+
+farm_out_dir: "/farm_out/romanov"
+
+# eic2ai measured 1.08 GB peak for ALL 15 writers on background events;
+# two writers stay under the 2G default.
+slurm_mem_per_cpu: "3G"   # 18x275 frames carry ~2x the 10x130 occupancy
+
+datasets_dir: "${base_dir}/datasets-phase10-18x275"
+slurm_files_per_job: 1
+# Admin limit on the account is 10 running jobs (2026-09-29); all 8 tasks
+# may run at once and still stay under it.
+slurm_array_throttle: 16
+
+# Node-local disk request: staging needs reco+sim (44 GB) plus outputs
+# (~16 GB peak). Farm /scratch varies per node — 8 GB nodes failed the
+# space guard on 2026-09-30; --tmp routes tasks to adequate nodes.
+slurm_tmp_disk: "100G" 
+
+# ---- converter -----------------------------------------------------------
+converter: "eic2ai"
+eic2ai_bin: "/work/eic3/users/romanov/optim/submodules/simulation-pipeline/eic2ai/build-eic_xl-26.06/eic2ai"
+eic2ai_args: ""
+
+# ---- stages --------------------------------------------------------------
+
+npsim_background:
+  output: "${base_dir}/dd4hep-background/${energy}"
+
+eicrecon:
+  input:   "${npsim_background.output}"
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/reco-background/${energy}"
+
+csv_phase10:                                        # 40_csv_convert.py csv_phase10
+  input:   "${eicrecon.output}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${npsim_background.output}"
+    suffix: ".edm4hep.root"
+  output:  "${base_dir}/csv-2026-09-bkg-phase10/${energy}"
+  roles:
+    - trk_hits
+    - cal_hits
+    # Phase-12 additions: per-event kinematics + manifest. Existing zips
+    # skip; a rerun regenerates only these (backfill 2026-09-30). truth_*
+    # is the only true-Q2 source here: background merging drops the
+    # generator's dis_* frame params.
+    - reco_dis
+    - event_index
