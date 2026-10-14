@@ -1,0 +1,3 @@
+[submodule "eic2ai"]
+	path = eic2ai
+	url = https://github.com/sroai/eic2ai.git
