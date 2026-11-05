@@ -127,13 +127,53 @@ npsim:
 |---|---|---|
 | `01/02_root_hepmc_*_convert.py` | — (pre-card) | generator ROOT |
 | `10_create_afterburner_jobs.py` | `afterburner` | `*.hepmc` |
-| `11_create_background_jobs.py` | `bg_merger` | `*.hepmc3.tree.root` |
-| `20_create_npsim_jobs.py` | `npsim` | `*.hepmc3.tree.root` |
+| `11_create_background_jobs.py` | `bg_merger` | `*.hepmc3.tree.root` / `*.hepmc` (signal), cocktail JSON |
+| `13_create_timeframe_builder_jobs.py [block]` | `tfb_frames` or the block named first (`tfb_70ns`, `tfb_2us`, `bkg_2us`, ...) | `*.edm4hep.root` signal (optional) + stage-23 pools |
+| `20_create_npsim_jobs.py` | `npsim` | `*.hepmc3.tree.root` / `*.hepmc` |
 | `21_create_npsim_saveall_jobs.py` | `npsim_saveall` | `*.hepmc3.tree.root` |
 | `22_create_npsim_background_jobs.py` | `npsim_background` | `*.bg.hepmc3.tree.root` |
+| `23_create_npsim_bgsource_jobs.py` | `npsim_bgsource` | cocktail JSON (no cards) |
 | `30_create_eicrecon_jobs.py` | `eicrecon` | `*.edm4hep.root` |
 | `40_csv_convert.py <stage>` | any `csv_*` block | `*.edm4hep.root` / `*.edm4eic.root` |
 | `50/51_create_*_analysis_jobs.py` | — (directory-based) | csv |
+
+### Several datasets per energy, and jobs per file
+
+A card's `slug` is bound into the config next to `energy`, so a stage output
+can be `${base_dir}/<stage>/${energy}/${slug}` and one campaign can run
+several datasets per beam energy (background-only frames, CC DIS at two Q2
+thresholds, K-Lambda). Cards for such datasets are made with
+`generate_datasets <stage> --energy E --slug S --input-dir DIR [--output-dir DIR]
+[--max-files N]`, or `--empty` for a dataset without input files (background-only
+timeframes). `configs/config-sro-26-10.yaml` with
+`scripts/sro_2026_10_make_cards.sh` is the worked example.
+
+Stages 11, 13 and 20 can fan one input file out into `jobs_per_file` jobs of
+`event_count` events each (`--signalSkip` / `skip` / `--skipNEvents`), output
+`<stem>.c<NNNN>...`; `datasets.<slug>.jobs_per_file` in the config overrides the
+stage default per dataset. Stage 11 also advances every background source by a
+per-job `skip` (from `background_pool_events`) so jobs do not replay the same
+stretch of the cocktail files.
+
+### Two mixing paths
+
+- **before Geant4** (`-merger`): `bg_merger` (SignalBackgroundMerger, 2 us
+  slices) -> `npsim_background` -> `eicrecon`. Every frame is simulated whole;
+  replayed generator events get fresh Geant4 seeds.
+- **after Geant4** (`-tfb`): `npsim_bgsource` simulates each cocktail source
+  on its own into per-source pools; `npsim` simulates the signal
+  background-free; `tfb_frames` (TimeframeBuilder, EDM4hep mode) mixes them at
+  the cocktail rates with `generator_status_offset` per source and
+  `SubEventHeaders` provenance. Cheap per frame, but a pool shorter than the
+  production (SynRad: ~31 frame-equivalents at 10x gold) is re-pasted hit for
+  hit; `replicas` in `npsim_bgsource.sources` buys distinct copies.
+  One config can hold several frame flavours: stage 13 takes the block name as
+  its first argument, and each block sets `frame_ns` (70, 2000, ...),
+  `signal_time_ns` (pin the signal at that time; needs a TimeframeBuilder with
+  the per-source `fixed_time_offset` option, pointed at by `tfb_binary`; `null`
+  = random crossing) and `background_only_jobs` (cards made with `--empty`).
+  `configs/config-msf-26-11.yaml` with `scripts/msf_2026_11_make_cards.sh` is
+  the worked example.
 
 There is **one** CSV script. Which converters run is entirely the config's
 `macros:` list — `40_csv_convert.py csv_dd4hep` runs the `edm4hep_*` macros the

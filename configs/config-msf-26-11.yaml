@@ -1,0 +1,161 @@
+# Meson Structure campaign — November 2026 — eic_xl:26.11-stable
+#
+# Self-contained: this one file is the full record of what runs where.
+# Everything stops at EDM4hep (no EICrecon, no CSV in this campaign).
+#
+# Per beam energy, 40,000 signal events = the first 500 events of the first 80
+# afterburner files of campaign 2026-07 (one 500-event job per file):
+#
+#   npsim            K+ Lambda signal alone through Geant4        -> dd4hep/<E>
+#   npsim_bgsource   each background source alone through Geant4 -> <bkg_dir>/pools/<E>/<source>
+#   tfb_70ns         signal pinned at t = 0 in 70 ns frames       -> dd4hep-tfb70ns/<E>
+#   tfb_2us          signal at a random crossing in 2 us frames   -> dd4hep-tfb2us/<E>
+#   bkg_2us          background-only 2 us frames, 40,000 per E    -> <bkg_dir>/frames-2us/<E>
+#
+# The three frame flavours are TimeframeBuilder (EDM4hep mode, after Geant4)
+# on the same per-source pools; stage 13 is run once per flavour with the
+# block name as its first argument. Pinning the signal needs the
+# `fixed_time_offset` patch, built from the fixed-time-offset branch of
+# TimeframeBuilder in this image and installed as ${base_dir}/bin/timeframe_builder.
+#
+# Cards for every stage are written by scripts/msf_2026_11_make_cards.sh.
+
+base_dir: "/work/eic3/users/romanov/meson-structure-2026-11"
+bkg_dir:  "/work/eic3/users/romanov/background-only-2026-11"
+signal_2026_07: "/work/eic3/users/romanov/meson-structure-2026-07"   # afterburner input (reused)
+
+container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.11-stable"
+bind_dirs:
+  - "${base_dir}"
+  - "${bkg_dir}"
+  - "${signal_2026_07}"
+  - "/volatile/eic/EPIC/EVGEN/BACKGROUNDS"            # cocktail inputs
+
+# Cocktail sources are root://dtn-eic.jlab.org//volatile/... URLs; on the farm
+# the same files are mounted, so read them directly.
+strip_xrootd_prefix: true
+
+energies:
+  - "5x41"
+  - "9x100"
+  - "9x130"
+  - "9x275"
+
+# Events per job: npsim takes the first 500 events of each input file; the
+# frame stages make 500 frames per job (one signal file -> one job).
+event_count: 500
+
+# First 80 afterburner files per energy (sorted) = 40,000 events.
+max_files_per_dataset: 80
+
+# SLURM stdout/stderr base (admin requirement: never /work).
+farm_out_dir: "/farm_out/romanov"
+# 2 GB per CPU is the farm's provisioning; more bills extra CPUs.
+slurm_mem_per_cpu: "2G"
+# Standing self-imposed concurrency cap on every array (%16).
+slurm_array_throttle: 16
+
+datasets_dir: "${base_dir}/datasets"
+slurm_files_per_job: 1
+
+# ---- background cocktails (stages 23 and 13) ----------------------------------
+# Closest-energy cocktail: the 10 GeV x N gold-coating 10 um + hadron-gas
+# recipes for the 9 x N beams, the 5 x 41 vacuum + hadron-gas recipe for 5x41
+# (its SynRad, Coulomb and Touschek inputs are the 5x100 files).
+background_configs:
+  "5x41":  "synrad_egasbrems_egascoulomb_egastouschek_hgas_5GeVx41GeV_vacuum_10000Ahr_machineruntime_50s.json"
+  "9x100": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx100GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
+  "9x130": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx130GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
+  "9x275": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx275GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
+
+# Events in each cocktail input file (TTree entries), keyed by status; used
+# for `pool_events: all` in stage 23. The 10xN counts were taken 2026-10-28,
+# the 5x41 ones 2026-11-04.
+background_pool_events:
+  "9x100": {2000: 832375, 3000: 30000000, 4000: 1478187, 5000: 1167494, 6000: 10000000}
+  "9x130": {2000: 832375, 3000: 30000000, 4000: 1478187, 5000: 1167494, 6000: 1000000}
+  "9x275": {2000: 832375, 3000: 30000000, 4000: 1478187, 5000: 1167494, 6000: 10000000}
+  "5x41":  {2000: 0, 3000: 0, 4000: 0, 5000: 0, 6000: 0}     # TODO: fill before stage 23 runs
+
+# ---- per-dataset options (slug -> options read by stage 13) ------------------
+# `pool_offset_jobs` keeps the three flavours from reading the same stretch of
+# each pool.
+datasets:
+  msf_tfb70ns: {pool_offset_jobs: 0}
+  msf_tfb2us:  {pool_offset_jobs: 100}
+  bkg_2us:     {pool_offset_jobs: 200, background_only_jobs: 80}   # 80 x 500 = 40,000 frames
+
+# ---- stages ------------------------------------------------------------------
+
+npsim:                                              # 20_create_npsim_jobs.py
+  input:   "${signal_2026_07}/afterburner/${energy}-priority"
+  pattern: "*.hepmc3.tree.root"
+  output:  "${base_dir}/dd4hep/${energy}"
+  jobs_per_file: 1                                  # first event_count events of each file
+
+npsim_bgsource:                                     # 23_create_npsim_bgsource_jobs.py
+  output:  "${bkg_dir}/pools/${energy}"             # + /<name>/<stem>.c<NNNN>.r<R>.edm4hep.root
+  # pool_events = events through Geant4, sized for ~80k frame-equivalents of
+  # 2 us (40k background-only + 40k signal frames; the 70 ns frames add 1.4k)
+  # with a 1.2 margin; TimeframeBuilder wraps the pool with repeat_on_eof.
+  # SynRad: the whole file is only ~31 frame-equivalents, so every frame beyond
+  # that re-pastes the same photons; 2 replicas (different Geant4 seeds)
+  # double the distinct material at the cost of ~1.7 M photon events.
+  sources:
+    2000: {name: synrad,   pool_events: all,    events_per_job: 50000, replicas: 2}
+    3000: {name: egas,     pool_events: 600000, events_per_job: 20000}
+    4000: {name: coulomb,  pool_events: 6000,   events_per_job: 1000}
+    5000: {name: touschek, pool_events: 50000,  events_per_job: 1000}
+    6000: {name: pgas,     pool_events: 7000,   events_per_job: 1000}
+
+tfb_70ns:                                           # 13_create_timeframe_builder_jobs.py tfb_70ns
+  input:   "${npsim.output}"
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/dd4hep-tfb70ns/${energy}"
+  pools:   "${npsim_bgsource.output}"
+  frame_ns: 70                                      # about 7 crossings; see Q7 in space-msf-2026-11
+  signal_time_ns: 0                                 # signal pinned at the frame start
+  frames_per_job: 500                               # = events per signal file
+  jobs_per_file: 1
+  bunch_crossing: true
+  bunch_crossing_period_ns: 10.15                   # 98.5 MHz (CDR)
+  attach_to_beam: true
+  tfb_binary: "${base_dir}/bin/timeframe_builder"   # 0.9.2 + fixed_time_offset
+
+tfb_2us:                                            # 13_create_timeframe_builder_jobs.py tfb_2us
+  input:   "${npsim.output}"
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/dd4hep-tfb2us/${energy}"
+  pools:   "${npsim_bgsource.output}"
+  frame_ns: 2000
+  signal_time_ns: null                              # random crossing, as in the ePIC campaigns
+  frames_per_job: 500
+  jobs_per_file: 1
+  bunch_crossing: true
+  bunch_crossing_period_ns: 10.15
+  attach_to_beam: true
+  tfb_binary: "${base_dir}/bin/timeframe_builder"
+
+bkg_2us:                                            # 13_create_timeframe_builder_jobs.py bkg_2us
+  output:  "${bkg_dir}/frames-2us/${energy}"        # cards: --empty (no signal source)
+  pools:   "${npsim_bgsource.output}"
+  frame_ns: 2000
+  frames_per_job: 500
+  background_only_jobs: 80
+  bunch_crossing: true
+  bunch_crossing_period_ns: 10.15
+  attach_to_beam: true
+  tfb_binary: "${base_dir}/bin/timeframe_builder"
+
+# ---- not run in this campaign (kept for the day reconstruction is added) ------
+# eicrecon:                                         # 30_create_eicrecon_jobs.py
+#   input:   "${tfb_70ns.output}"
+#   pattern: "*.edm4hep.root"
+#   output:  "${base_dir}/reco-tfb70ns/${energy}"
+#   # B0 truth seeding for Lambda -> p pi-: MaxVertex* are stock parameters,
+#   # AcceptSecondaries exists only in the patched EICrecon (ai-comb-lam notes).
+#   flags:
+#     - "-Ptracking:TrackerTruthSeeds:AcceptSecondaries=1"
+#     - "-Ptracking:TrackerTruthSeeds:MaxVertexZ=3000"
+#     - "-Ptracking:TrackerTruthSeeds:MaxVertexX=100"
+#     - "-Ptracking:TrackerTruthSeeds:MaxVertexY=100"
