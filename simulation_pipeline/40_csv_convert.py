@@ -54,7 +54,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from simulation_pipeline.job_creator import JobCreator, write_top_master_scripts
-from simulation_pipeline.datasets import load_config, load_config_for_energy, load_cards
+from simulation_pipeline.datasets import load_config, load_config_for_card, load_cards
 
 # Converter macros shipped with this repo (a config may point csv_convert_dir
 # at a project-local directory with extra macros instead).
@@ -398,7 +398,7 @@ def main():
     creators = []
     for card in cards:
         energy = card.get("energy")
-        cfg = load_config_for_energy(args.config, energy) if energy else config
+        cfg = load_config_for_card(args.config, energy=energy, slug=card.get("slug"))
         print("\n" + "=" * 60)
         print(f"CARD: {card['slug']}  ({card.get('n_files', len(card['files']))} files)")
         creators.append(build_creator(args.stage, cfg, card))

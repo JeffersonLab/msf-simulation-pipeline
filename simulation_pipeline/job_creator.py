@@ -190,6 +190,11 @@ class JobCreator:
         self.container_script_generate_func = self.default_container_script_generator
 
         self.container_script_params_updater: Callable = None
+
+        # Optional hook: job/script basename for an input token. Stages that
+        # fan one input file out into several jobs (chunk_token below) set it
+        # so each chunk gets its own script, log and output name.
+        self.basename_func: Callable = None
         
         # Initialize storage for generated scripts
         self.generated_scripts = {
@@ -236,9 +241,15 @@ class JobCreator:
         """)
 
 
+    def job_basename(self, input_file: str) -> str:
+        """Script/log/job name for one input (or chunk token)."""
+        if self.basename_func:
+            return self.basename_func(input_file)
+        return os.path.splitext(os.path.basename(input_file))[0]
+
     def default_container_script_generator(self, input_file: str) -> Dict[str, str]:
         """Generate the container execution script content."""
-        basename = os.path.splitext(os.path.basename(input_file))[0]
+        basename = self.job_basename(input_file)
 
         params = {
             'input_file': input_file,
@@ -284,7 +295,7 @@ class JobCreator:
 
     def write_slurm_script(self, input_file: str, container_script: str) -> str:
         """Write SLURM submission script for a single input file."""
-        basename = os.path.splitext(os.path.basename(input_file))[0]
+        basename = self.job_basename(input_file)
 
         bindings = ' '.join([f'-B {binddir}:{binddir}' for binddir in self.config['bind_dirs']])
         
@@ -831,3 +842,50 @@ def exension_replacer(from_ext, to_ext):
         return os.path.join(output_dir, output_name)
     
     return replacer
+
+
+# ---------------------------------------------------------------------------
+# Fan-out helpers: one input file -> several jobs (chunks)
+# ---------------------------------------------------------------------------
+# JobCreator makes one job per entry of input_files. A stage that wants N jobs
+# per file (e.g. 40,000 frames from a 1M-event signal file, 500 frames per
+# job) passes chunk tokens instead of plain paths and parses them back in its
+# params updater. The token never reaches the shell; only the parsed path does.
+
+CHUNK_SEP = "::chunk"
+
+
+def chunk_token(path, index):
+    """`/path/file.root::chunk0007` -- input path plus a 0-based chunk index."""
+    return f"{path}{CHUNK_SEP}{int(index):04d}"
+
+
+def parse_chunk_token(token):
+    """Return (path, index) for a chunk token, or (path, None) for a plain path."""
+    path, sep, idx = str(token).partition(CHUNK_SEP)
+    return path, (int(idx) if sep else None)
+
+
+def strip_known_extensions(name, extensions):
+    """Drop the first matching extension from a file name (longest first)."""
+    for ext in sorted(extensions, key=len, reverse=True):
+        if name.endswith(ext):
+            return name[: -len(ext)]
+    return os.path.splitext(name)[0]
+
+
+def chunk_basename_func(extensions):
+    """basename_func for chunk tokens: `<stem>.c<NNNN>` (or `<stem>` if plain)."""
+    def func(token):
+        path, index = parse_chunk_token(token)
+        stem = strip_known_extensions(os.path.basename(path), extensions)
+        return stem if index is None else f"{stem}.c{index:04d}"
+    return func
+
+
+def chunk_output_func(extensions, to_ext):
+    """output_file_name_func for chunk tokens: `<output_dir>/<stem>.c<NNNN><to_ext>`."""
+    base = chunk_basename_func(extensions)
+    def func(token, output_dir):
+        return os.path.join(output_dir, base(token) + to_ext)
+    return func

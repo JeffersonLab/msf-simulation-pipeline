@@ -1,0 +1,225 @@
+# SRO background frames, October 2026 -- eic_xl:26.10-stable
+#
+# Self-contained: this one file is the full record of what runs where.
+# Open questions are marked `TODO Q<n>` and listed at the bottom.
+#
+# Datasets per beam energy (10x100, 10x130, 10x275), 40,000 frames each:
+#   bkg_empty          background cocktail only (gold coating 10 um, hgas, status 2000-6000)
+#   dis_cc_py8_q2100   CC DIS Pythia8 Q2 > 100   + cocktail   (10x100, 10x275 only -- Q1)
+#   dis_cc_py8_q21000  CC DIS Pythia8 Q2 > 1000  + cocktail   (10x100, 10x275 only -- Q1)
+#   msf_klam           K+ Lambda meson structure + cocktail   (10x100, 10x130 only -- Q2)
+#
+# Two mixing paths, kept apart by directory suffix:
+#   -merger : SignalBackgroundMerger (HepMC3, before Geant4) -> npsim on whole frames
+#             bg_merger (11) -> npsim_background (22) -> eicrecon (30) -> csv_merger (40)
+#   -tfb    : TimeframeBuilder 0.9.2 (EDM4hep, after Geant4) on per-source Geant4 pools
+#             npsim_bgsource (23) + npsim (20, background-free signal)
+#             -> tfb_frames (13) -> eicrecon (30) -> csv_tfb (40)
+#
+# Cards for every dataset are written by scripts/sro_2026_10_make_cards.sh
+# (one `generate_datasets` call per stage x energy x slug).
+
+base_dir: "/work/eic/users/romanov/sro-2026-10"      # same filesystem as /work/eic3/users/romanov
+
+container: "/cvmfs/singularity.opensciencegrid.org/eicweb/eic_xl:26.10-stable"
+bind_dirs:
+  - "${base_dir}"
+  - "/volatile/eic/EPIC/EVGEN"                        # cocktail inputs (BACKGROUNDS) and DIS/CC signal
+  - "/work/eic3/users/romanov/meson-structure-2026-06" # K+Lambda afterburned HepMC (ASCII)
+  - "/scratch"                                        # node-local staging in the csv stages
+
+# Cocktail sources are root://dtn-eic.jlab.org//volatile/... URLs; on the farm
+# the same files are mounted, so read them directly.
+strip_xrootd_prefix: true
+
+energies:
+  - "10x100"
+  - "10x130"
+  - "10x275"
+
+# Frames per job for the simulation stages (merger nSlices, npsim_background
+# --numberOfEvents, TimeframeBuilder -n, signal npsim chunk). 40,000 frames per
+# dataset = 80 jobs. TODO Q5: fix after the Step-0 timing job -- gold 10x
+# frames carry ~26.5k SynRad photons each; 500 frames must fit the 24 h wall.
+event_count: 500
+
+# SLURM stdout/stderr base (admin requirement: never /work).
+farm_out_dir: "/farm_out/romanov"
+# 2 GB per CPU is the farm's provisioning; more bills extra CPUs.
+slurm_mem_per_cpu: "2G"
+# Standing self-imposed concurrency cap on every array (%16).
+slurm_array_throttle: 16
+
+datasets_dir: "${base_dir}/datasets"
+slurm_files_per_job: 1
+
+# ---- background cocktails (stages 11, 13, 22, 23) ----------------------------
+# Gold coating 10 um, hadron gas included; the 2026-07 campaign recipe.
+# SynRad, Coulomb and Touschek inputs are the 10x275 files at every 10x energy.
+background_configs:
+  "10x100": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx100GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
+  "10x130": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx130GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
+  "10x275": "synrad_egasbrems_egascoulomb_egastouschek_hgas_10GeVx275GeV_GoldCoating_10um_10000Ahr_machineruntime_50s.json"
+
+# Events in each cocktail input file (TTree entries counted 2026-10-28), keyed
+# by status. Used for (a) per-job background skips in stage 11 so every job
+# reads a fresh stretch of e-gas/Coulomb/Touschek/p-gas, (b) `pool_events: all`
+# in stage 23. Frame-equivalents at the cocktail rates: SynRad 31, Touschek
+# 2.5 M, Coulomb 25 M, e-gas 4.7 M, p-gas 16-157 M.
+background_pool_events:
+  "10x100": {2000: 832375, 3000: 30000000, 4000: 1478187, 5000: 1167494, 6000: 10000000}
+  "10x130": {2000: 832375, 3000: 30000000, 4000: 1478187, 5000: 1167494, 6000: 1000000}
+  "10x275": {2000: 832375, 3000: 30000000, 4000: 1478187, 5000: 1167494, 6000: 10000000}
+
+# ---- per-dataset options (slug -> options read by stages 11, 13, 20) ---------
+# `pool_offset_jobs` keeps the background skips of different datasets at the
+# same energy from starting on the same stretch of each pool.
+datasets:
+  bkg_empty:
+    # Background-only frames from a merger that needs a signal file: the
+    # signal (one CC DIS event per frame) is shifted to status 7000; stage 22
+    # only simulates statuses 1,2 and 2001..6002, so Geant4 never tracks it
+    # and it stays in MCParticles as a tagged ghost. TODO Q3: alternative is
+    # signal_freq ~1e-9 (zero signals per frame) if the merger writes empty
+    # slices -- decide after the 200-frame smoke test.
+    signal_status: 7000
+    signal_freq: 0
+    jobs_per_file: 80          # 80 x 500 = 40,000 frames from one signal file
+    background_only_jobs: 80   # -tfb path: no signal source at all
+    pool_offset_jobs: 0
+  dis_cc_py8_q2100:
+    jobs_per_file: 80          # one 1M-event file, first 40,000 events
+    pool_offset_jobs: 100
+  dis_cc_py8_q21000:
+    jobs_per_file: 80
+    pool_offset_jobs: 200
+  msf_klam:
+    jobs_per_file: 10          # 8 files x 5,000 events x 10 jobs x 500 frames
+    pool_offset_jobs: 300
+
+# ---- signal inputs (used by scripts/sro_2026_10_make_cards.sh) ----------------
+# CC DIS: already afterburned (beamEffects_xAngle=-0.025), 5 x 1M events per
+# Q2 threshold at 10x100 and 10x275; nothing at 10x130.
+signal_inputs:
+  dis_cc_py8_q2100:
+    dir: "/volatile/eic/EPIC/EVGEN/DIS/CC/${energy}/minQ2=100"
+    pattern: "*.hepmc3.tree.root"
+    max_files: 1
+  dis_cc_py8_q21000:
+    dir: "/volatile/eic/EPIC/EVGEN/DIS/CC/${energy}/minQ2=1000"
+    pattern: "*.hepmc3.tree.root"
+    max_files: 1
+  # K+Lambda, afterburned 2026-06 (200 files x 5,000 events; 10x100, 10x130,
+  # 18x275, 5x41). TODO Q2: no 10x275 sample exists.
+  msf_klam:
+    dir: "/work/eic3/users/romanov/meson-structure-2026-06/afterburner/${energy}-priority"
+    pattern: "*.afterburner.hepmc"
+    max_files: 8
+  # Ghost signal for bkg_empty (merger path only; never simulated). The 10x100
+  # file serves all three energies -- kinematics are irrelevant for a ghost.
+  bkg_empty:
+    dir: "/volatile/eic/EPIC/EVGEN/DIS/CC/10x100/minQ2=100"
+    pattern: "*.hepmc3.tree.root"
+    max_files: 1
+
+# ---- -merger path ------------------------------------------------------------
+
+bg_merger:                                          # 11_create_background_jobs.py
+  pattern: "*.hepmc3.tree.root"                     # cards come from signal_inputs (make_cards.sh)
+  output:  "${base_dir}/bg_merged-merger/${energy}/${slug}"
+  jobs_per_file: 1                                  # datasets.<slug>.jobs_per_file overrides
+
+npsim_background:                                   # 22_create_npsim_background_jobs.py
+  input:   "${bg_merger.output}"
+  pattern: "*.bg.hepmc3.tree.root"
+  output:  "${base_dir}/dd4hep-merger/${energy}/${slug}"
+
+# ---- -tfb path ---------------------------------------------------------------
+
+npsim_bgsource:                                     # 23_create_npsim_bgsource_jobs.py
+  output:  "${base_dir}/pools-tfb/${energy}"        # + /<name>/<stem>.c<NNNN>.r<R>.edm4hep.root
+  # pool_events = events through Geant4 (40,000 frames x events/frame x ~1.2
+  # margin; the TimeframeBuilder wraps the pool with repeat_on_eof).
+  # SynRad: the whole 832k-event file is only 31 frame-equivalents; every
+  # frame beyond that re-pastes the same SynRad hits. TODO Q4: replicas.
+  sources:
+    2000: {name: synrad,   pool_events: all,    events_per_job: 50000, replicas: 1}
+    3000: {name: egas,     pool_events: 300000, events_per_job: 20000}
+    4000: {name: coulomb,  pool_events: 3000,   events_per_job: 1000}
+    5000: {name: touschek, pool_events: 25000,  events_per_job: 1000}
+    6000: {name: pgas,     pool_events: 3500,   events_per_job: 1000}
+
+npsim:                                              # 20_create_npsim_jobs.py (background-free signal)
+  pattern: "*.hepmc3.tree.root"                     # cards come from signal_inputs (make_cards.sh)
+  output:  "${base_dir}/dd4hep-signal/${energy}/${slug}"
+  jobs_per_file: 1                                  # datasets.<slug>.jobs_per_file overrides
+
+tfb_frames:                                         # 13_create_timeframe_builder_jobs.py
+  input:   "${npsim.output}"
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/dd4hep-tfb/${energy}/${slug}"
+  pools:   "${npsim_bgsource.output}"
+  frames_per_job: 500
+  jobs_per_file: 1                                  # per stage-20 output file (already 500-event chunks)
+  background_only_jobs: 80
+  bunch_crossing: true
+  bunch_crossing_period_ns: 10.15                   # 98.5 MHz (CDR); TODO Q6: 1160 bunches -> 11.0 ns?
+  attach_to_beam: true
+
+# ---- shared downstream ------------------------------------------------------
+# eicrecon cards are made with --input-dir/--output-dir per path, slugs carry
+# the path suffix (dis_cc_py8_q2100-merger, dis_cc_py8_q2100-tfb) so the two
+# cards do not collide in datasets/eicrecon/.
+
+eicrecon:                                           # 30_create_eicrecon_jobs.py
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/reco/${energy}/${slug}"     # make_cards.sh overrides to reco-merger/ reco-tfb/
+
+# CSV via eic2ai. TODO Q7: eic2ai has no 26.10 build yet (build-eic_xl-26.07 is
+# the newest); campaign 26.07 files broke 26.06 readers (schema 81000) -- expect
+# the same between 26.07 and 26.10.
+converter: "eic2ai"
+eic2ai_bin: "/work/eic3/users/romanov/optim/submodules/simulation-pipeline/eic2ai/build-eic_xl-26.10/eic2ai"
+eic2ai_args: ""
+# One 500-frame reco+sim pair is a few GB; stage-in needs --gres=disk.
+slurm_tmp_disk: "40G"
+staging_headroom_gb: 5
+
+csv_merger:                                         # 40_csv_convert.py csv_merger
+  input:   "${base_dir}/reco-merger/${energy}/${slug}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${npsim_background.output}"
+    suffix: ".edm4hep.root"
+  output:  "${base_dir}/csv-merger/${energy}/${slug}"
+  roles:
+    - trk_hits
+    - cal_hits
+    - reco_dis
+    - event_index
+
+csv_tfb:                                            # 40_csv_convert.py csv_tfb
+  input:   "${base_dir}/reco-tfb/${energy}/${slug}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${tfb_frames.output}"
+    suffix: ".edm4hep.root"
+  output:  "${base_dir}/csv-tfb/${energy}/${slug}"
+  roles:
+    - trk_hits
+    - cal_hits
+    - reco_dis
+    - event_index
+
+# ---- open questions -----------------------------------------------------------
+# Q1 CC DIS at 10x130: no EVGEN exists (only 10x100, 10x275). Generate, skip, or
+#    substitute 10x100 kinematics?
+# Q2 K+Lambda at 10x275: no generator output; 2026-06 has 10x100, 10x130, 18x275, 5x41.
+# Q3 bkg_empty on the merger path: ghost signal (status 7000) vs signal_freq ~0.
+# Q4 SynRad replicas in the -tfb pools: 1 replica = 31 distinct frame-equivalents
+#    reused ~1,300x over 40k frames (I/O only); each extra replica costs
+#    ~832k photon events of Geant4 (about the SynRad cost of 31 full frames).
+# Q5 event_count (frames per job) and wall time from the Step-0 timing job.
+# Q6 Bunch-crossing period: 10.15 ns (CDR 98.5 MHz) or 11.0 ns (1160 bunches).
+# Q7 eic2ai build for 26.10 and the TimeframeBuilder -> eicrecon read test.
+# Q8 CPU-hour cap: merger path = 4 datasets x 3 energies x 40k full Geant4 frames.

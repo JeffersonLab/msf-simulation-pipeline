@@ -23,20 +23,29 @@ import argparse
 import os
 from glob import glob
 
-from .datasets import cards_dir, load_config, load_config_for_energy, write_card
+from .datasets import load_config_for_card, cards_dir, load_config, load_config_for_energy, write_card
 
 
-def _make_local_cards(stage, config_path, out_dir, energies, max_files):
-    """Glob each energy's input dir and write one card per energy."""
+def _make_local_cards(stage, config_path, out_dir, energies, max_files,
+                      input_dir_override=None, slug_override=None, output_override=None,
+                      pattern_override=None):
+    """Glob each energy's input dir and write one card per energy.
+
+    `input_dir_override` + `slug_override` make one card from another
+    directory than the stage's `input` (e.g. the same eicrecon stage fed by
+    the -merger and the -tfb simulation outputs, kept apart by slug).
+    """
     written = []
     for energy in energies:
-        cfg = load_config_for_energy(config_path, energy)
+        slug = slug_override or f"{stage}_{energy}"
+        cfg = load_config_for_card(config_path, energy=energy, slug=slug)
         if stage not in cfg:
             raise SystemExit(f"Config has no '{stage}' block.")
         scfg = cfg[stage]
-        input_dir = os.path.abspath(str(scfg.input))
-        pattern = str(scfg.pattern)
-        output = str(scfg.output) if "output" in scfg else None
+        input_dir = os.path.abspath(str(input_dir_override or scfg.input))
+        pattern = str(pattern_override or scfg.pattern)
+        output = str(output_override) if output_override else (
+            str(scfg.output) if "output" in scfg else None)
 
         files = sorted(glob(os.path.join(input_dir, pattern)))
         if max_files:
@@ -45,7 +54,6 @@ def _make_local_cards(stage, config_path, out_dir, energies, max_files):
             print(f"  WARN: no '{pattern}' in {input_dir} -- skipping {energy}")
             continue
 
-        slug = f"{stage}_{energy}"
         path = os.path.join(out_dir, f"{slug}.yaml")
         write_card(
             path,
@@ -58,29 +66,32 @@ def _make_local_cards(stage, config_path, out_dir, energies, max_files):
     return written
 
 
-def _make_card_from_files(stage, config_path, out_dir, energy, slug, files):
-    """Write one card from an explicit file list (no globbing; inputs may be fake)."""
-    if energy:
-        cfg = load_config_for_energy(config_path, energy)
-    else:
-        cfg = load_config(config_path)
+def _make_card_from_files(stage, config_path, out_dir, energy, slug, files, output_override=None):
+    """Write one card from an explicit file list (no globbing; inputs may be fake).
+
+    ``files`` may be empty (``--empty``): the card then describes a dataset
+    without input files, e.g. background-only timeframes, and the stage
+    decides how many jobs to emit from its config block.
+    """
+    slug = slug or (f"{stage}_{energy}" if energy else f"{stage}_manual")
+    cfg = load_config_for_card(config_path, energy=energy, slug=slug)
     scfg = cfg.get(stage, {})
 
     # Resolve the stage's output template if it is present and resolvable
     # (a `${energy}` template needs --energy; otherwise leave output unset).
-    output = None
-    if "output" in scfg:
+    output = str(output_override) if output_override else None
+    if output is None and "output" in scfg:
         try:
             output = str(scfg.output)
         except Exception:
             output = None
     pattern = str(scfg.pattern) if "pattern" in scfg else None
 
-    slug = slug or (f"{stage}_{energy}" if energy else f"{stage}_manual")
     path = os.path.join(out_dir, f"{slug}.yaml")
     write_card(
         path,
-        dataset="(manual file list)", slug=slug, stage=stage, energy=energy,
+        dataset="(manual file list)" if files else "(no input files)",
+        slug=slug, stage=stage, energy=energy,
         pattern=pattern, output=output, files=list(files),
         metadata={"source": "manual", **({"beam_energy": energy} if energy else {})},
     )
@@ -126,7 +137,18 @@ def main():
     parser.add_argument("--files", nargs="+", default=None,
                         help="Explicit file list -> one card (no globbing; inputs may be fake)")
     parser.add_argument("--slug", default=None,
-                        help="Card slug/filename (only with --files; default <stage>_<energy>)")
+                        help="Card slug/filename (only with --files/--empty; default <stage>_<energy>)")
+    parser.add_argument("--input-dir", default=None,
+                        help="Glob this directory instead of the stage's `input` (local mode, "
+                             "one --energy; pair with --slug)")
+    parser.add_argument("--pattern", default=None,
+                        help="Glob pattern instead of the stage's `pattern` (local mode)")
+    parser.add_argument("--output-dir", default=None,
+                        help="Card output directory instead of the stage's `output` "
+                             "(e.g. reco-tfb/... next to reco-merger/...)")
+    parser.add_argument("--empty", action="store_true",
+                        help="Write one card with no input files (e.g. background-only "
+                             "timeframes); requires --slug and usually --energy")
     parser.add_argument("--max-files", type=int, default=None,
                         help="Cap files per card (override config.max_files_per_dataset; 0 = all)")
     parser.add_argument("--clean", action="store_true",
@@ -143,22 +165,29 @@ def main():
     max_files = args.max_files if args.max_files is not None \
         else int(config.get("max_files_per_dataset", 0))
 
-    source = "manual" if args.files else ("rucio" if args.rucio else "local")
+    if args.empty and not args.slug:
+        raise SystemExit("--empty needs --slug.")
+    source = "manual" if (args.files or args.empty) else ("rucio" if args.rucio else "local")
     print("=" * 70)
     print(f"GENERATE DATASETS  stage={args.stage}  source={source}")
     print(f"  cards dir: {out_dir}")
     print("=" * 70)
 
-    if args.files:
+    if args.files or args.empty:
         written = _make_card_from_files(
-            args.stage, args.config, out_dir, args.energy, args.slug, args.files)
+            args.stage, args.config, out_dir, args.energy, args.slug, args.files or [],
+            output_override=args.output_dir)
     elif args.rucio:
         written = _make_rucio_cards(args.stage, config, args.config, out_dir, max_files)
     else:
         energies = [args.energy] if args.energy else list(config.get("energies", []))
         if not energies:
             raise SystemExit("No energies: set config.energies or pass --energy.")
-        written = _make_local_cards(args.stage, args.config, out_dir, energies, max_files)
+        if args.input_dir and len(energies) != 1:
+            raise SystemExit("--input-dir needs exactly one --energy.")
+        written = _make_local_cards(args.stage, args.config, out_dir, energies, max_files,
+                                    input_dir_override=args.input_dir, slug_override=args.slug,
+                                    output_override=args.output_dir, pattern_override=args.pattern)
 
     print("\n" + "=" * 70)
     print(f"Wrote {len(written)} card(s) to {out_dir}")
@@ -173,9 +202,11 @@ def _stage_script(stage):
     return {
         "afterburner": "10_create_afterburner_jobs.py",
         "bg_merger": "11_create_background_jobs.py",
+        "tfb_frames": "13_create_timeframe_builder_jobs.py",
         "npsim": "20_create_npsim_jobs.py",
         "npsim_saveall": "21_create_npsim_saveall_jobs.py",
         "npsim_background": "22_create_npsim_background_jobs.py",
+        "npsim_bgsource": "23_create_npsim_bgsource_jobs.py",
         "eicrecon": "30_create_eicrecon_jobs.py",
     }.get(stage, f"<stage {stage}>.py")
 

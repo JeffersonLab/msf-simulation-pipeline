@@ -46,6 +46,23 @@ def load_config_for_energy(config_path, energy):
     return OmegaConf.merge(load_config(config_path), {"energy": energy})
 
 
+def load_config_for_card(config_path, energy=None, slug=None):
+    """Load config with ``${energy}`` and ``${slug}`` bound.
+
+    A campaign may run several datasets per beam energy (e.g. background-only
+    frames, CC DIS at two Q2 thresholds, K-Lambda). Stage outputs can then use
+    ``${base_dir}/<stage>/${energy}/${slug}`` and every card keeps its own
+    output directory while ``${energy}`` still selects the detector compact
+    file.
+    """
+    binding = {}
+    if energy is not None:
+        binding["energy"] = energy
+    if slug is not None:
+        binding["slug"] = slug
+    return OmegaConf.merge(load_config(config_path), binding)
+
+
 # ---------------------------------------------------------------------------
 # Card I/O
 # ---------------------------------------------------------------------------
@@ -130,7 +147,7 @@ def run_card_pipeline(stage, build_creator_fn, description="Generate jobs."):
     creators = []
     for card in cards:
         energy = card.get("energy")
-        cfg = load_config_for_energy(args.config, energy) if energy else config
+        cfg = load_config_for_card(args.config, energy=energy, slug=card.get("slug"))
         print("\n" + "=" * 60)
         print(f"CARD: {card['slug']}  ({card.get('n_files', len(card.get('files', [])))} files)")
         creators.append(build_creator_fn(cfg, card, args.config))
