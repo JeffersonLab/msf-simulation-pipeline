@@ -370,7 +370,7 @@ def build_creator(stage, config, card):
         slurm_files_per_job=int(config.get("slurm_files_per_job", 20)),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         slurm_tmp_disk=str(config.get("slurm_tmp_disk", "")),
-        slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
+        slurm_mem_per_cpu=str(scfg.get("slurm_mem_per_cpu", config.get("slurm_mem_per_cpu", "2G"))),
         farm_out_dir=config.get("farm_out_dir"),
     )
     if converter == "eic2ai":

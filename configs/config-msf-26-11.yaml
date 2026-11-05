@@ -89,8 +89,9 @@ background_pool_events:
 # each pool.
 datasets:
   msf_tfb200ns: {pool_offset_jobs: 0}
-  msf_tfb2us:  {pool_offset_jobs: 100}
-  bkg_2us:     {pool_offset_jobs: 200, background_only_jobs: 80}   # 80 x 500 = 40,000 frames
+  msf_tfb2us:  {pool_offset_jobs: 100, slurm_mem_per_cpu: "10G"}  # eicrecon memory (stage 30): 8 of 50
+  bkg_2us:     {pool_offset_jobs: 200, background_only_jobs: 80,   # 9x275 tasks OOM at 5G x 2 CPUs;
+                slurm_mem_per_cpu: "10G"}                           # 80 x 500 = 40,000 frames
   # control sample on the old merger path (stages 11 + 22, see below)
   msf_merger:  {pool_offset_jobs: 300}                              # one signal per 2 us frame
   bkg_merger:  {pool_offset_jobs: 400, signal_status: 7000, signal_freq: 0}   # ghost signal: shifted to
@@ -228,6 +229,7 @@ csv_signal:                                         # 40_csv_convert.py csv_sign
     dir:    "${base_dir}/dd4hep/${energy}"
     suffix: ".edm4hep.root"
   output:  "${base_dir}/csv-reco/${energy}"
+  slurm_mem_per_cpu: "3G"                           # eic2ai 0.9 GB on a 500-event pair
   roles: &all_roles
     - event_index
     - mc_particles
@@ -252,6 +254,7 @@ csv_tfb200ns:                                       # 40_csv_convert.py csv_tfb2
     dir:    "${base_dir}/dd4hep-tfb200ns/${energy}"
     suffix: ".edm4hep.root"
   output:  "${base_dir}/csv-tfb200ns/${energy}"
+  slurm_mem_per_cpu: "6G"                           # eic2ai ~5 GB on a 200 ns pair
   roles: *all_roles
 
 csv_tfb2us:                                         # 40_csv_convert.py csv_tfb2us
@@ -261,6 +264,7 @@ csv_tfb2us:                                         # 40_csv_convert.py csv_tfb2
     dir:    "${base_dir}/dd4hep-tfb2us/${energy}"
     suffix: ".edm4hep.root"
   output:  "${base_dir}/csv-tfb2us/${energy}"
+  slurm_mem_per_cpu: "8G"                           # TODO from the eic2ai retest on a 2 us pair
   roles: &frame_roles
     - event_index
     - mc_dis
@@ -284,4 +288,5 @@ csv_bkg2us:                                         # 40_csv_convert.py csv_bkg2
     dir:    "${bkg_dir}/frames-2us/${energy}"
     suffix: ".edm4hep.root"
   output:  "${bkg_dir}/csv-2us/${energy}"
+  slurm_mem_per_cpu: "8G"                           # TODO from the eic2ai retest on a 2 us pair
   roles: *frame_roles

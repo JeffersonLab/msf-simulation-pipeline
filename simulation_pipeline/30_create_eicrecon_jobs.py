@@ -62,10 +62,12 @@ def build(config, card, config_path):
         events=config.event_count,
         container=config['container'],
         beam_config=card.get("energy") or card["slug"],
-        # the stage block may ask for more memory than the campaign default
-        # (timeframes with ~70k MCParticles per frame need more than events do)
-        slurm_mem_per_cpu=str(config[STAGE].get("slurm_mem_per_cpu",
-                                                 config.get("slurm_mem_per_cpu", "2G"))),
+        # memory: datasets.<slug>.slurm_mem_per_cpu, else the stage block, else
+        # the campaign default (2 us frames with ~70k MCParticles need far more
+        # than events do; measured OOM at 10 GB on some 9x275 frames)
+        slurm_mem_per_cpu=str(((config.get("datasets") or {}).get(card["slug"]) or {}).get(
+            "slurm_mem_per_cpu", config[STAGE].get("slurm_mem_per_cpu",
+                                                     config.get("slurm_mem_per_cpu", "2G")))),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         farm_out_dir=config.get("farm_out_dir"),
     )
