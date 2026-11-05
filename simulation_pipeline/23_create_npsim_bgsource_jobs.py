@@ -14,7 +14,7 @@ Config block:
     npsim_bgsource:
       output: "${base_dir}/pools-tfb/${energy}"     # + /<source name>/
       sources:                                     # keyed by cocktail status
-        2000: {name: synrad,   pool_events: all,    events_per_job: 50000, replicas: 1}
+        2000: {name: synrad,   pool_events: all,    events_per_job: 50000, replicas: 1, slurm_mem_per_cpu: 4G}
         3000: {name: egas,     pool_events: 300000, events_per_job: 20000}
         4000: {name: coulomb,  pool_events: 3000,   events_per_job: 1000}
         5000: {name: touschek, pool_events: 25000,  events_per_job: 1000}
@@ -211,7 +211,11 @@ def build_source(config, energy, entry, source_cfg, pool_sizes, strip_xrootd):
         events=events_per_job,
         container=config["container"],
         beam_config=energy,
-        slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
+        # SynRad chunks (50k photons) peak near 3 GB; per-source `slurm_mem_per_cpu`
+        # overrides the stage and campaign values.
+        slurm_mem_per_cpu=str(source_cfg.get("slurm_mem_per_cpu",
+                                             config[STAGE].get("slurm_mem_per_cpu",
+                                                               config.get("slurm_mem_per_cpu", "2G")))),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         farm_out_dir=config.get("farm_out_dir"),
     )

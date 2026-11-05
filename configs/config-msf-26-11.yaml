@@ -102,7 +102,7 @@ npsim_bgsource:                                     # 23_create_npsim_bgsource_j
   # that re-pastes the same photons; 2 replicas (different Geant4 seeds)
   # double the distinct material at the cost of ~1.7 M photon events.
   sources:
-    2000: {name: synrad,   pool_events: all,    events_per_job: 50000, replicas: 2}
+    2000: {name: synrad,   pool_events: all,    events_per_job: 50000, replicas: 2, slurm_mem_per_cpu: 4G}   # 2.9 GB RSS measured
     3000: {name: egas,     pool_events: 600000, events_per_job: 20000}
     4000: {name: coulomb,  pool_events: 6000,   events_per_job: 1000}
     5000: {name: touschek, pool_events: 50000,  events_per_job: 1000}
