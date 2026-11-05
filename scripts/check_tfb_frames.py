@@ -103,8 +103,10 @@ def main():
                   f"e.g. {odd[:4].tolist()}")
 
     for coll in ("B0TrackerHits", "VertexBarrelHits", "SiBarrelHits", "ForwardRomanPotHits",
-                 "ForwardOffMTrackerHits", "ZDCHcalHits", "HcalEndcapPHits", "EcalEndcapPHits"):
+                 "ForwardOffMTrackerHits", "HcalFarForwardZDCHits", "EcalFarForwardZDCHits", "HcalEndcapPHits", "EcalEndcapPHits"):
         k = f"{coll}/{coll}.time"
+        if k not in keys:   # SimCalorimeterHit has no time; the contributions carry it
+            k = f"{coll}Contributions/{coll}Contributions.time"
         if k in keys:
             t = tree[k].array(library="np")
             n = np.array([len(x) for x in t])

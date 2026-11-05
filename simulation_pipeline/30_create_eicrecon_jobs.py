@@ -37,7 +37,7 @@ def create_container_script_template():
         source /opt/detector/epic-main/bin/thisepic.sh
     fi
     cd $(dirname {output_file})/..
-    /usr/bin/time -v /usr/bin/time -v eicrecon -Pdd4hep:xml_files=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml  -Ppodio:output_file={output_file}  {eicrecon_flags}  {input_file} 2>&1
+    /usr/bin/time -v eicrecon -Pdd4hep:xml_files=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml  -Ppodio:output_file={output_file}  {eicrecon_flags}  {input_file} 2>&1
 
     echo ""
     echo "=========================================================================="
@@ -62,7 +62,10 @@ def build(config, card, config_path):
         events=config.event_count,
         container=config['container'],
         beam_config=card.get("energy") or card["slug"],
-        slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
+        # the stage block may ask for more memory than the campaign default
+        # (timeframes with ~70k MCParticles per frame need more than events do)
+        slurm_mem_per_cpu=str(config[STAGE].get("slurm_mem_per_cpu",
+                                                 config.get("slurm_mem_per_cpu", "2G"))),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         farm_out_dir=config.get("farm_out_dir"),
     )

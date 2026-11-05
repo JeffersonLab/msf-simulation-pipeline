@@ -1,7 +1,8 @@
 # Meson Structure campaign — November 2026 — eic_xl:26.11-stable
 #
 # Self-contained: this one file is the full record of what runs where.
-# Everything stops at EDM4hep (no EICrecon, no CSV in this campaign).
+# Stages: Geant4 signal and pools, three TimeframeBuilder flavours, then (added
+# 2026-11-05) EICrecon and eic2ai CSV on all four datasets.
 #
 # Per beam energy, 40,000 signal events = the first 500 events of the first 80
 # afterburner files of campaign 2026-07 (one 500-event job per file):
@@ -33,6 +34,7 @@ bind_dirs:
   - "${bkg_dir}"
   - "${signal_2026_07}"
   - "/volatile/eic/EPIC/EVGEN/BACKGROUNDS"            # cocktail inputs
+  - "/scratch"                                        # node-local staging of the csv stages
 
 # Cocktail sources are root://dtn-eic.jlab.org//volatile/... URLs; on the farm
 # the same files are mounted, so read them directly.
@@ -165,15 +167,94 @@ bkg_2us:                                            # 13_create_timeframe_builde
   tfb_binary: "${base_dir}/bin/timeframe_builder"
   slurm_mem_per_cpu: "3G"                           # 1.7-2.0 GB RSS measured (9x130 smoke, 2 us frames)
 
-# ---- not run in this campaign (kept for the day reconstruction is added) ------
-# eicrecon:                                         # 30_create_eicrecon_jobs.py
-#   input:   "${tfb_200ns.output}"
-#   pattern: "*.edm4hep.root"
-#   output:  "${base_dir}/reco-tfb200ns/${energy}"
-#   # B0 truth seeding for Lambda -> p pi-: MaxVertex* are stock parameters,
-#   # AcceptSecondaries exists only in the patched EICrecon (ai-comb-lam notes).
-#   flags:
-#     - "-Ptracking:TrackerTruthSeeds:AcceptSecondaries=1"
-#     - "-Ptracking:TrackerTruthSeeds:MaxVertexZ=3000"
-#     - "-Ptracking:TrackerTruthSeeds:MaxVertexX=100"
-#     - "-Ptracking:TrackerTruthSeeds:MaxVertexY=100"
+# ---- reconstruction and CSV (added 2026-11-05: "reconstruction and eic2ai CSV of
+# everything in this campaign") -------------------------------------------------
+# Four input datasets per energy go through EICrecon; their cards are made with
+# --input-dir/--output-dir (make_cards.sh), one slug per dataset:
+#   msf_signal    dd4hep/<E>            -> reco/<E>
+#   msf_tfb200ns  dd4hep-tfb200ns/<E>   -> reco-tfb200ns/<E>
+#   msf_tfb2us    dd4hep-tfb2us/<E>     -> reco-tfb2us/<E>
+#   bkg_2us       <bkg_dir>/frames-2us  -> <bkg_dir>/reco-2us/<E>
+# EICrecon 1.43.0 (this image) seeds B0 tracks from Geant4 secondaries by
+# default (EICrecon PR #2901, B0TrackerTruthSeeds with maxVertexZ 6 m), so the
+# 2026-07 truth-seeding flags are not needed.
+eicrecon:                                           # 30_create_eicrecon_jobs.py
+  pattern: "*.edm4hep.root"
+  output:  "${base_dir}/reco/${energy}"             # overridden per card
+  slurm_mem_per_cpu: "4G"                           # TODO from the smoke test (2 us frames hold ~70k MCParticles)
+
+# CSV via eic2ai (one program call per file pair, every role in one pass),
+# built in this image from the pipeline's eic2ai submodule (f6f6b09).
+converter: "eic2ai"
+eic2ai_bin: "/w/eic-scshelf2104/users/romanov/meson-structure-work/meson-structure/simulation-pipeline/eic2ai/build-eic_xl-26.11/eic2ai"
+eic2ai_args: ""
+# Inputs are staged to node-local disk: a 2 us reco + sim pair is up to ~8 GB.
+slurm_tmp_disk: "40G"
+staging_headroom_gb: 5
+
+# Every role for the signal and the 200 ns frames (events and found-event
+# windows); the 2 us flavours skip mc_particles (37M rows per 500-frame file).
+csv_signal:                                         # 40_csv_convert.py csv_signal
+  input:   "${base_dir}/reco/${energy}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${base_dir}/dd4hep/${energy}"
+    suffix: ".edm4hep.root"
+  output:  "${base_dir}/csv-reco/${energy}"
+  roles: &all_roles
+    - event_index
+    - mc_particles
+    - mc_dis
+    - mcpart_lambda
+    - trk_hits
+    - cal_hits
+    - calo_clusters
+    - reco_particles
+    - reco_dis
+    - reco_ff_lambda
+    - lambda_acceptance
+    - comb_candidates
+    - acceptance_ppim
+    - acceptance_npi0
+    - combinatorics_ppim
+
+csv_tfb200ns:                                       # 40_csv_convert.py csv_tfb200ns
+  input:   "${base_dir}/reco-tfb200ns/${energy}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${base_dir}/dd4hep-tfb200ns/${energy}"
+    suffix: ".edm4hep.root"
+  output:  "${base_dir}/csv-tfb200ns/${energy}"
+  roles: *all_roles
+
+csv_tfb2us:                                         # 40_csv_convert.py csv_tfb2us
+  input:   "${base_dir}/reco-tfb2us/${energy}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${base_dir}/dd4hep-tfb2us/${energy}"
+    suffix: ".edm4hep.root"
+  output:  "${base_dir}/csv-tfb2us/${energy}"
+  roles: &frame_roles
+    - event_index
+    - mc_dis
+    - mcpart_lambda
+    - trk_hits
+    - cal_hits
+    - calo_clusters
+    - reco_particles
+    - reco_dis
+    - reco_ff_lambda
+    - lambda_acceptance
+    - comb_candidates
+    - acceptance_ppim
+    - acceptance_npi0
+    - combinatorics_ppim
+
+csv_bkg2us:                                         # 40_csv_convert.py csv_bkg2us
+  input:   "${bkg_dir}/reco-2us/${energy}"
+  pattern: "*.edm4eic.root"
+  paired:
+    dir:    "${bkg_dir}/frames-2us/${energy}"
+    suffix: ".edm4hep.root"
+  output:  "${bkg_dir}/csv-2us/${energy}"
+  roles: *frame_roles
