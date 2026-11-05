@@ -88,7 +88,7 @@ background_pool_events:
 # `pool_offset_jobs` keeps the three flavours from reading the same stretch of
 # each pool.
 datasets:
-  msf_tfb200ns: {pool_offset_jobs: 0}
+  msf_tfb200ns: {pool_offset_jobs: 0, slurm_mem_per_cpu: "8G"}    # eicrecon: 4 of 50 9x275 tasks OOM at 5G
   msf_tfb2us:  {pool_offset_jobs: 100, slurm_mem_per_cpu: "10G"}  # eicrecon memory (stage 30): 8 of 50
   bkg_2us:     {pool_offset_jobs: 200, background_only_jobs: 80,   # 9x275 tasks OOM at 5G x 2 CPUs;
                 slurm_mem_per_cpu: "10G"}                           # 80 x 500 = 40,000 frames
