@@ -26,6 +26,14 @@ from glob import glob
 from .datasets import load_config_for_card, cards_dir, load_config, load_config_for_energy, write_card
 
 
+def _card_path(out_dir, slug, energy):
+    """Card file name. An explicit --slug reused for several energies (the same
+    dataset name per energy, e.g. bkg_2us) gets the energy appended so the
+    cards of one stage never overwrite each other."""
+    name = slug if (not energy or energy in slug) else f"{slug}_{energy}"
+    return os.path.join(out_dir, f"{name}.yaml")
+
+
 def _make_local_cards(stage, config_path, out_dir, energies, max_files,
                       input_dir_override=None, slug_override=None, output_override=None,
                       pattern_override=None):
@@ -54,7 +62,7 @@ def _make_local_cards(stage, config_path, out_dir, energies, max_files,
             print(f"  WARN: no '{pattern}' in {input_dir} -- skipping {energy}")
             continue
 
-        path = os.path.join(out_dir, f"{slug}.yaml")
+        path = _card_path(out_dir, slug, energy)
         write_card(
             path,
             dataset=input_dir, slug=slug, stage=stage, energy=energy,
@@ -87,7 +95,7 @@ def _make_card_from_files(stage, config_path, out_dir, energy, slug, files, outp
             output = None
     pattern = str(scfg.pattern) if "pattern" in scfg else None
 
-    path = os.path.join(out_dir, f"{slug}.yaml")
+    path = _card_path(out_dir, slug, energy)
     write_card(
         path,
         dataset="(manual file list)" if files else "(no input files)",
