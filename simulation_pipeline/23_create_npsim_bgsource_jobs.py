@@ -233,7 +233,9 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
-    energies = [args.energy] if args.energy else list(config.get("energies", []))
+    # `npsim_bgsource.energies` restricts the pools to the energies whose cocktail
+    # inputs exist (campaign `energies` may carry signal-only beams).
+    energies = [args.energy] if args.energy else list(config[STAGE].get("energies", config.get("energies", [])))
     strip_xrootd = bool(config.get("strip_xrootd_prefix", False))
     creators = []
     for energy in energies:

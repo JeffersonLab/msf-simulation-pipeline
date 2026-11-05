@@ -8,7 +8,7 @@
 #
 #   npsim            K+ Lambda signal alone through Geant4        -> dd4hep/<E>
 #   npsim_bgsource   each background source alone through Geant4 -> <bkg_dir>/pools/<E>/<source>
-#   tfb_70ns         signal pinned at t = 0 in 70 ns frames       -> dd4hep-tfb70ns/<E>
+#   tfb_200ns        signal pinned at t = 0 in 200 ns frames      -> dd4hep-tfb200ns/<E>
 #   tfb_2us          signal at a random crossing in 2 us frames   -> dd4hep-tfb2us/<E>
 #   bkg_2us          background-only 2 us frames, 40,000 per E    -> <bkg_dir>/frames-2us/<E>
 #
@@ -75,13 +75,15 @@ background_pool_events:
   "9x100": {2000: 832375, 3000: 30000000, 4000: 1478187, 5000: 1167494, 6000: 10000000}
   "9x130": {2000: 832375, 3000: 30000000, 4000: 1478187, 5000: 1167494, 6000: 1000000}
   "9x275": {2000: 832375, 3000: 30000000, 4000: 1478187, 5000: 1167494, 6000: 10000000}
-  "5x41":  {2000: 0, 3000: 0, 4000: 0, 5000: 0, 6000: 0}     # TODO: fill before stage 23 runs
+  # 5x41: the cocktail's SynRad 5x100, e-gas 5 GeV and p-gas 41 GeV inputs exist
+  # neither on the farm nor on the public XRootD door (2026-11-04), so 5x41 has
+  # signal only: no pools, no frames (frame_energies below).
 
 # ---- per-dataset options (slug -> options read by stage 13) ------------------
 # `pool_offset_jobs` keeps the three flavours from reading the same stretch of
 # each pool.
 datasets:
-  msf_tfb70ns: {pool_offset_jobs: 0}
+  msf_tfb200ns: {pool_offset_jobs: 0}
   msf_tfb2us:  {pool_offset_jobs: 100}
   bkg_2us:     {pool_offset_jobs: 200, background_only_jobs: 80}   # 80 x 500 = 40,000 frames
 
@@ -93,10 +95,14 @@ npsim:                                              # 20_create_npsim_jobs.py
   output:  "${base_dir}/dd4hep/${energy}"
   jobs_per_file: 1                                  # first event_count events of each file
 
+# Energies with background pools and frames (scripts/msf_2026_11_make_cards.sh).
+frame_energies: ["9x100", "9x130", "9x275"]
+
 npsim_bgsource:                                     # 23_create_npsim_bgsource_jobs.py
+  energies: ${frame_energies}
   output:  "${bkg_dir}/pools/${energy}"             # + /<name>/<stem>.c<NNNN>.r<R>.edm4hep.root
   # pool_events = events through Geant4, sized for ~80k frame-equivalents of
-  # 2 us (40k background-only + 40k signal frames; the 70 ns frames add 1.4k)
+  # 2 us (40k background-only + 40k signal frames; the 200 ns frames add 4k)
   # with a 1.2 margin; TimeframeBuilder wraps the pool with repeat_on_eof.
   # SynRad: the whole file is only ~31 frame-equivalents, so every frame beyond
   # that re-pastes the same photons; 2 replicas (different Geant4 seeds)
@@ -108,12 +114,16 @@ npsim_bgsource:                                     # 23_create_npsim_bgsource_j
     5000: {name: touschek, pool_events: 50000,  events_per_job: 1000}
     6000: {name: pgas,     pool_events: 7000,   events_per_job: 1000}
 
-tfb_70ns:                                           # 13_create_timeframe_builder_jobs.py tfb_70ns
+tfb_200ns:                                          # 13_create_timeframe_builder_jobs.py tfb_200ns
   input:   "${npsim.output}"
   pattern: "*.edm4hep.root"
-  output:  "${base_dir}/dd4hep-tfb70ns/${energy}"
+  output:  "${base_dir}/dd4hep-tfb200ns/${energy}"
   pools:   "${npsim_bgsource.output}"
-  frame_ns: 70                                      # about 7 crossings; see Q7 in space-msf-2026-11
+  # 200 ns (about 20 crossings) keeps the prompt far-forward signal: B0 at
+  # 19-25 ns, Off-Momentum 85-91 ns, Roman Pots 108-116 ns, ZDC from 119 ns
+  # (99.3 % of signal tracker hits within t0 + 200 ns). 70 ns would keep the
+  # central detector and B0 only.
+  frame_ns: 200
   signal_time_ns: 0                                 # signal pinned at the frame start
   frames_per_job: 500                               # = events per signal file
   jobs_per_file: 1
@@ -149,9 +159,9 @@ bkg_2us:                                            # 13_create_timeframe_builde
 
 # ---- not run in this campaign (kept for the day reconstruction is added) ------
 # eicrecon:                                         # 30_create_eicrecon_jobs.py
-#   input:   "${tfb_70ns.output}"
+#   input:   "${tfb_200ns.output}"
 #   pattern: "*.edm4hep.root"
-#   output:  "${base_dir}/reco-tfb70ns/${energy}"
+#   output:  "${base_dir}/reco-tfb200ns/${energy}"
 #   # B0 truth seeding for Lambda -> p pi-: MaxVertex* are stock parameters,
 #   # AcceptSecondaries exists only in the patched EICrecon (ai-comb-lam notes).
 #   flags:

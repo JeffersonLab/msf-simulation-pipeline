@@ -8,13 +8,13 @@ Background comes from the per-source pools of stage 23; the signal (if any)
 from background-free npsim output of stage 20.
 
 The config block name is the optional first argument (default `tfb_frames`),
-so one config can carry several frame flavours (70 ns, 2 us, background-only):
+so one config can carry several frame flavours (200 ns, 2 us, background-only):
 
-    python simulation_pipeline/13_create_timeframe_builder_jobs.py tfb_70ns -c cfg
+    python simulation_pipeline/13_create_timeframe_builder_jobs.py tfb_200ns -c cfg
 
 Cards (same name as the block):
-  * signal dataset:  `generate_datasets tfb_70ns --files <signal edm4hep> --energy E --slug S`
-                     (or the local glob of `tfb_70ns.input`); each signal file
+  * signal dataset:  `generate_datasets tfb_200ns --files <signal edm4hep> --energy E --slug S`
+                     (or the local glob of `tfb_200ns.input`); each signal file
                      becomes `jobs_per_file` jobs of `frames_per_job` frames,
                      exactly one signal event per frame, `skip` walking through
                      the file.
@@ -163,6 +163,11 @@ def create_container_script_template():
     mkdir -p $(dirname {output_part})
     cd $(dirname {output_file})
 
+    # Library paths for a timeframe_builder built outside the image (RPATH stripped).
+    if [ -f "/opt/detector/epic-main/bin/thisepic.sh" ]; then
+        source /opt/detector/epic-main/bin/thisepic.sh
+    fi
+
     /usr/bin/time -v {tfb_binary} \\
         --config {tfb_yaml} \\
         -o {output_part} \\
@@ -306,7 +311,7 @@ def build(config, card, config_path):
 
 
 if __name__ == "__main__":
-    # Optional first argument = config block name (tfb_70ns, tfb_2us, ...);
+    # Optional first argument = config block name (tfb_200ns, tfb_2us, ...);
     # the remaining arguments are the standard -c/--datasets of every stage.
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
         STAGE = sys.argv.pop(1)

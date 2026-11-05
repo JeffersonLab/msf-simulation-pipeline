@@ -79,7 +79,7 @@ def build(config, card, config_path):
         events=events,
         container=config['container'],
         beam_config=card.get("energy") or card["slug"],
-        slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
+        slurm_mem_per_cpu=str(stage_cfg.get("slurm_mem_per_cpu", config.get("slurm_mem_per_cpu", "2G"))),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         farm_out_dir=config.get("farm_out_dir"),
     )

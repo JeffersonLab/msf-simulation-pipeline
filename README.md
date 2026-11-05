@@ -128,7 +128,7 @@ npsim:
 | `01/02_root_hepmc_*_convert.py` | — (pre-card) | generator ROOT |
 | `10_create_afterburner_jobs.py` | `afterburner` | `*.hepmc` |
 | `11_create_background_jobs.py` | `bg_merger` | `*.hepmc3.tree.root` / `*.hepmc` (signal), cocktail JSON |
-| `13_create_timeframe_builder_jobs.py [block]` | `tfb_frames` or the block named first (`tfb_70ns`, `tfb_2us`, `bkg_2us`, ...) | `*.edm4hep.root` signal (optional) + stage-23 pools |
+| `13_create_timeframe_builder_jobs.py [block]` | `tfb_frames` or the block named first (`tfb_200ns`, `tfb_2us`, `bkg_2us`, ...) | `*.edm4hep.root` signal (optional) + stage-23 pools |
 | `20_create_npsim_jobs.py` | `npsim` | `*.hepmc3.tree.root` / `*.hepmc` |
 | `21_create_npsim_saveall_jobs.py` | `npsim_saveall` | `*.hepmc3.tree.root` |
 | `22_create_npsim_background_jobs.py` | `npsim_background` | `*.bg.hepmc3.tree.root` |
@@ -168,7 +168,7 @@ stretch of the cocktail files.
   production (SynRad: ~31 frame-equivalents at 10x gold) is re-pasted hit for
   hit; `replicas` in `npsim_bgsource.sources` buys distinct copies.
   One config can hold several frame flavours: stage 13 takes the block name as
-  its first argument, and each block sets `frame_ns` (70, 2000, ...),
+  its first argument, and each block sets `frame_ns` (200, 2000, ...),
   `signal_time_ns` (pin the signal at that time; needs a TimeframeBuilder with
   the per-source `fixed_time_offset` option, pointed at by `tfb_binary`; `null`
   = random crossing) and `background_only_jobs` (cards made with `--empty`).
