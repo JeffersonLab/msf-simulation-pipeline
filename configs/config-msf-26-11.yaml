@@ -94,6 +94,7 @@ npsim:                                              # 20_create_npsim_jobs.py
   pattern: "*.hepmc3.tree.root"
   output:  "${base_dir}/dd4hep/${energy}"
   jobs_per_file: 1                                  # first event_count events of each file
+  slurm_mem_per_cpu: "4G"                           # 2.5 GB RSS measured (9x130 smoke job 14247195)
 
 # Energies with background pools and frames (scripts/msf_2026_11_make_cards.sh).
 frame_energies: ["9x100", "9x130", "9x275"]
@@ -101,6 +102,7 @@ frame_energies: ["9x100", "9x130", "9x275"]
 npsim_bgsource:                                     # 23_create_npsim_bgsource_jobs.py
   energies: ${frame_energies}
   output:  "${bkg_dir}/pools/${energy}"             # + /<name>/<stem>.c<NNNN>.r<R>.edm4hep.root
+  slurm_mem_per_cpu: "4G"                           # 2.5-3.2 GB RSS measured per source (9x130 smoke jobs)
   # pool_events = events through Geant4, sized for ~80k frame-equivalents of
   # 2 us (40k background-only + 40k signal frames; the 200 ns frames add 4k)
   # with a 1.2 margin; TimeframeBuilder wraps the pool with repeat_on_eof.
@@ -108,7 +110,7 @@ npsim_bgsource:                                     # 23_create_npsim_bgsource_j
   # that re-pastes the same photons; 2 replicas (different Geant4 seeds)
   # double the distinct material at the cost of ~1.7 M photon events.
   sources:
-    2000: {name: synrad,   pool_events: all,    events_per_job: 50000, replicas: 2, slurm_mem_per_cpu: 4G}   # 2.9 GB RSS measured
+    2000: {name: synrad,   pool_events: all,    events_per_job: 50000, replicas: 2}
     3000: {name: egas,     pool_events: 600000, events_per_job: 20000}
     4000: {name: coulomb,  pool_events: 6000,   events_per_job: 1000}
     5000: {name: touschek, pool_events: 50000,  events_per_job: 1000}
