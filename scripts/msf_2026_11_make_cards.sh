@@ -5,7 +5,8 @@
 #
 #   bash scripts/msf_2026_11_make_cards.sh [stage ...]
 #
-# Stages: npsim tfb_200ns tfb_2us bkg_2us eicrecon csv (default: all). Stage 23
+# Stages: npsim tfb_200ns tfb_2us bkg_2us eicrecon csv bg_merger npsim_background
+# (default: all). Stage 23
 # (pools) is cocktail-driven and needs no cards. Re-running overwrites the
 # cards it touches. Cards glob the upstream stage's directory, so make them
 # after that stage has produced its files (frames after stage 20, eicrecon
@@ -20,12 +21,15 @@ BASE=/work/eic3/users/romanov/meson-structure-2026-11
 ENERGIES="5x41 9x100 9x130 9x275"          # signal (stage 20)
 FRAME_ENERGIES="9x100 9x130 9x275"         # pools and frames (5x41 has no cocktail inputs)
 BKG=/work/eic3/users/romanov/background-only-2026-11
-STAGES=${*:-"npsim tfb_200ns tfb_2us bkg_2us eicrecon csv"}
+S07=/work/eic3/users/romanov/meson-structure-2026-07
+MERGER_ENERGIES="9x100 9x275"             # control sample on the merger path
+STAGES=${*:-"npsim tfb_200ns tfb_2us bkg_2us eicrecon csv bg_merger npsim_background"}
 
 cd "$HERE"
 for stage in $STAGES; do
   echo "################ $stage"
   energies=$FRAME_ENERGIES; [[ $stage == npsim || $stage == eicrecon || $stage == csv ]] && energies=$ENERGIES
+  [[ $stage == bg_merger || $stage == npsim_background ]] && energies=$MERGER_ENERGIES
   for e in $energies; do
     case $stage in
       npsim)
@@ -54,6 +58,17 @@ for stage in $STAGES; do
         $GEN csv_tfb200ns -c "$CFG" --energy "$e"
         $GEN csv_tfb2us   -c "$CFG" --energy "$e"
         $GEN csv_bkg2us   -c "$CFG" --energy "$e" ;;
+      bg_merger)
+        # first 40 signal files (20,000 frames); the ghost-signal dataset reads the same files
+        $GEN bg_merger -c "$CFG" --energy "$e" --slug msf_merger \
+             --input-dir "$S07/afterburner/$e-priority" --max-files 40
+        $GEN bg_merger -c "$CFG" --energy "$e" --slug bkg_merger \
+             --input-dir "$S07/afterburner/$e-priority" --max-files 40 ;;
+      npsim_background)
+        $GEN npsim_background -c "$CFG" --energy "$e" --slug msf_merger \
+             --input-dir "$BASE/bg_merged/$e/msf_merger" --output-dir "$BASE/dd4hep-merger/$e"
+        $GEN npsim_background -c "$CFG" --energy "$e" --slug bkg_merger \
+             --input-dir "$BASE/bg_merged/$e/bkg_merger" --output-dir "$BKG/frames-2us-merger/$e" ;;
       *) echo "unknown stage $stage"; exit 1 ;;
     esac
   done
@@ -72,4 +87,6 @@ Cards written under $BASE/datasets/<stage>/. Render jobs with:
   python simulation_pipeline/40_csv_convert.py csv_tfb200ns      -c $CFG
   python simulation_pipeline/40_csv_convert.py csv_tfb2us        -c $CFG
   python simulation_pipeline/40_csv_convert.py csv_bkg2us        -c $CFG
+  python simulation_pipeline/11_create_background_jobs.py        -c $CFG   # merger control sample
+  python simulation_pipeline/22_create_npsim_background_jobs.py  -c $CFG   # after stage 11 ran
 EOF

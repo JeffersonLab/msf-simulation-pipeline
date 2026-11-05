@@ -91,6 +91,10 @@ datasets:
   msf_tfb200ns: {pool_offset_jobs: 0}
   msf_tfb2us:  {pool_offset_jobs: 100}
   bkg_2us:     {pool_offset_jobs: 200, background_only_jobs: 80}   # 80 x 500 = 40,000 frames
+  # control sample on the old merger path (stages 11 + 22, see below)
+  msf_merger:  {pool_offset_jobs: 300}                              # one signal per 2 us frame
+  bkg_merger:  {pool_offset_jobs: 400, signal_status: 7000, signal_freq: 0}   # ghost signal: shifted to
+                                                                    # 7001/7002, never simulated by stage 22
 
 # ---- stages ------------------------------------------------------------------
 
@@ -166,6 +170,28 @@ bkg_2us:                                            # 13_create_timeframe_builde
   attach_to_beam: true
   tfb_binary: "${base_dir}/bin/timeframe_builder"
   slurm_mem_per_cpu: "3G"                           # 1.7-2.0 GB RSS measured (9x130 smoke, 2 us frames)
+
+# ---- control sample: the old merger path (added 2026-11-05, "run empty 2 us
+# frames and msf simulations (only dd4hep) using the old frame builder and make
+# plots comparing the results"; 9x100 and 9x275, 20,000 frames each) --------
+# SignalBackgroundMerger mixes the afterburner HepMC signal with the cocktail
+# into 2 us frames BEFORE Geant4 (status offsets on generator particles only),
+# then npsim simulates whole frames. The same first 40 signal files x 500
+# events as the TimeframeBuilder flavours, so the two paths hold the same
+# signal events. Whole-frame npsim measured 2026-06: ~11 s per 2 us frame
+# (5,000 frames in 15-16 h), so 500 frames per job is ~1.6 h.
+merger_energies: ["9x100", "9x275"]
+
+bg_merger:                                          # 11_create_background_jobs.py
+  pattern: "*.hepmc3.tree.root"                     # cards: --input-dir <afterburner/E-priority> --max-files 40
+  output:  "${base_dir}/bg_merged/${energy}/${slug}"
+  jobs_per_file: 1                                  # 500 frames from the first 500 events of each file
+  slurm_mem_per_cpu: "3G"
+
+npsim_background:                                   # 22_create_npsim_background_jobs.py
+  pattern: "*.bg.hepmc3.tree.root"
+  output:  "${base_dir}/dd4hep-merger/${energy}"    # msf_merger; bkg_merger card -> ${bkg_dir}/frames-2us-merger/${energy}
+  slurm_mem_per_cpu: "4G"                           # TODO from the smoke test
 
 # ---- reconstruction and CSV (added 2026-11-05: "reconstruction and eic2ai CSV of
 # everything in this campaign") -------------------------------------------------
