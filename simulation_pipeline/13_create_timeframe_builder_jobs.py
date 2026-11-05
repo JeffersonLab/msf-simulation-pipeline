@@ -261,8 +261,12 @@ def build(config, card, config_path):
             sources.append(signal)
         sources += background_sources(entries, names, pools_dir, pool_offset_jobs + job_index,
                                       frames, frame_ns, stage_cfg)
+        # TimeframeBuilder takes the YAML `output_file` over the `-o` option, so the
+        # YAML must name the partial path too (the job renames it at the end).
+        output_part = os.path.join(os.path.dirname(params["output_file"]), "partial",
+                                   os.path.basename(params["output_file"]))
         tfb_cfg = {
-            "output_file": params["output_file"],
+            "output_file": output_part,
             "max_events": frames,
             "timeframe_duration": frame_ns,
             "bunch_crossing_period": bunch_period,
@@ -280,8 +284,7 @@ def build(config, card, config_path):
         return {
             **params,
             "input_file": path,
-            "output_part": os.path.join(os.path.dirname(params["output_file"]), "partial",
-                                        os.path.basename(params["output_file"])),
+            "output_part": output_part,
             "tfb_yaml": tfb_yaml,
             "tfb_binary": tfb_binary,
             "signal_desc": signal_desc,
