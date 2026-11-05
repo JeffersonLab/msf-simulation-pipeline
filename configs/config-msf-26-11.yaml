@@ -181,7 +181,8 @@ bkg_2us:                                            # 13_create_timeframe_builde
 eicrecon:                                           # 30_create_eicrecon_jobs.py
   pattern: "*.edm4hep.root"
   output:  "${base_dir}/reco/${energy}"             # overridden per card
-  slurm_mem_per_cpu: "4G"                           # TODO from the smoke test (2 us frames hold ~70k MCParticles)
+  slurm_mem_per_cpu: "5G"                           # smoke: 3.1 GB RSS signal, 4.3 GB 200 ns frames, 3.9 GB 2 us frames
+  # wall per 500: signal 6 min, 200 ns frames 12 min, 2 us frames 35-45 min (smoke 2026-11-05)
 
 # CSV via eic2ai (one program call per file pair, every role in one pass),
 # built in this image from the pipeline's eic2ai submodule (f6f6b09).
