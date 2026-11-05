@@ -14,9 +14,12 @@
 #
 # The three frame flavours are TimeframeBuilder (EDM4hep mode, after Geant4)
 # on the same per-source pools; stage 13 is run once per flavour with the
-# block name as its first argument. Pinning the signal needs the
-# `fixed_time_offset` patch, built from the fixed-time-offset branch of
-# TimeframeBuilder in this image and installed as ${base_dir}/bin/timeframe_builder.
+# block name as its first argument. ${base_dir}/bin/timeframe_builder is
+# 0.9.2 built in this image from the fixed-time-offset branch with two
+# patches: `fixed_time_offset` (pins the signal) and the EDM4hep
+# `repeat_on_eof` fix (0.9.2 re-merges the stale last pool event with
+# cumulative offsets once a pool is read past its end; every frame job here
+# reads its pools several times).
 #
 # Cards for every stage are written by scripts/msf_2026_11_make_cards.sh.
 
@@ -132,7 +135,8 @@ tfb_200ns:                                          # 13_create_timeframe_builde
   bunch_crossing: true
   bunch_crossing_period_ns: 10.15                   # 98.5 MHz (CDR)
   attach_to_beam: true
-  tfb_binary: "${base_dir}/bin/timeframe_builder"   # 0.9.2 + fixed_time_offset
+  tfb_binary: "${base_dir}/bin/timeframe_builder"   # 0.9.2 + fixed_time_offset + repeat_on_eof fix
+  slurm_mem_per_cpu: "3G"                           # 1.7-2.0 GB RSS measured (9x130 smoke, 2 us frames)
 
 tfb_2us:                                            # 13_create_timeframe_builder_jobs.py tfb_2us
   input:   "${npsim.output}"
@@ -147,6 +151,7 @@ tfb_2us:                                            # 13_create_timeframe_builde
   bunch_crossing_period_ns: 10.15
   attach_to_beam: true
   tfb_binary: "${base_dir}/bin/timeframe_builder"
+  slurm_mem_per_cpu: "3G"                           # 1.7-2.0 GB RSS measured (9x130 smoke, 2 us frames)
 
 bkg_2us:                                            # 13_create_timeframe_builder_jobs.py bkg_2us
   output:  "${bkg_dir}/frames-2us/${energy}"        # cards: --empty (no signal source)
@@ -158,6 +163,7 @@ bkg_2us:                                            # 13_create_timeframe_builde
   bunch_crossing_period_ns: 10.15
   attach_to_beam: true
   tfb_binary: "${base_dir}/bin/timeframe_builder"
+  slurm_mem_per_cpu: "3G"                           # 1.7-2.0 GB RSS measured (9x130 smoke, 2 us frames)
 
 # ---- not run in this campaign (kept for the day reconstruction is added) ------
 # eicrecon:                                         # 30_create_eicrecon_jobs.py
