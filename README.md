@@ -81,6 +81,24 @@ scripts/                      collect_files_status.py (log progress),
   CPU; requesting more makes SLURM bill extra CPUs (mem=5G → 2 CPUs) and idles
   the farm. Override per campaign with `slurm_mem_per_cpu` if a stage truly
   needs more.
+- **/farm_out and home have small per-user quotas.** On 2026-11-07 npsim on
+  whole 2 µs frames printed 3.5 MB of INFO lines per frame (one per primary
+  vertex). 64 concurrent tasks filled /farm_out in about an hour; every later
+  log write failed and 309 queued tasks died within a minute each. Guards now
+  built in:
+  - npsim stages run with `--printLevel WARNING` (`npsim_print_level`, per
+    stage or global).
+  - Each file's stdout and stderr are capped at `slurm_log_max_mb` (default
+    10 MB): the start is kept, then the last 200 lines, then a
+    `##### LOG BYTES: N produced` line. Use that line from a smoke test to
+    size a campaign's logs.
+  - Each array task first writes 1 MB to its log and output directories. If
+    that fails, it puts its own array on hold (`scontrol hold`) and exits 75,
+    so the queue is not drained by instant failures. Free space, then
+    `scontrol release <array id>`.
+  - `submit_jobs.sh` makes the same write test (and warns about a full home)
+    and refuses to submit when tasks × files × 2 streams × cap exceeds
+    `farm_out_budget_gb` (default 20). Override with `FORCE_LOG_BUDGET=1`.
 
 ## Submitting: which script submits what
 

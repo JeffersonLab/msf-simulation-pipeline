@@ -20,7 +20,7 @@ import sys
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simulation_pipeline.job_creator import JobCreator, exension_replacer
+from simulation_pipeline.job_creator import log_guard_kwargs, npsim_print_level, JobCreator, exension_replacer
 from simulation_pipeline.datasets import run_card_pipeline
 
 STAGE = "npsim_background"
@@ -91,7 +91,7 @@ def create_container_script_template():
         --physics.alternativeDecayStatuses  "{alt_decay_statuses}" \\
         --inputFiles {input_file} \\
         --outputFile {output_file} \\
-        --numberOfEvents {events} 2>&1
+        --printLevel {npsim_print_level} --numberOfEvents {events} 2>&1
 
     echo
     echo "=========================================================================="
@@ -124,7 +124,9 @@ def build(config, card, config_path):
                                                  config.get("slurm_mem_per_cpu", "2G"))),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         farm_out_dir=config.get("farm_out_dir"),
+        **log_guard_kwargs(config),
     )
+    runner.config['npsim_print_level'] = npsim_print_level(config, STAGE)
     runner.container_script_template = create_container_script_template()
     runner.container_script_params_updater = lambda params: {
         **params,

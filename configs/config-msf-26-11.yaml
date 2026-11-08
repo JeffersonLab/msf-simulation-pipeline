@@ -59,6 +59,13 @@ farm_out_dir: "/farm_out/romanov"
 slurm_mem_per_cpu: "2G"
 # Standing self-imposed concurrency cap on every array (%16).
 slurm_array_throttle: 16
+# Log guards after the 2026-11-07 /farm_out overflow (README, farm etiquette):
+# npsim at INFO printed 3.5 MB per merged 2 us frame; WARNING prints ~60 KB per job.
+npsim_print_level: "WARNING"
+# per-file cap on stdout and on stderr; normal logs here are 0-2 MB
+slurm_log_max_mb: 10
+# submit_jobs.sh refuses a dataset whose worst-case logs exceed this
+farm_out_budget_gb: 20
 
 datasets_dir: "${base_dir}/datasets"
 slurm_files_per_job: 1

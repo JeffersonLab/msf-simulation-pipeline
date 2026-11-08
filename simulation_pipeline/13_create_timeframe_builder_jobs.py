@@ -60,7 +60,7 @@ import textwrap
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simulation_pipeline.job_creator import JobCreator, chunk_token, parse_chunk_token
+from simulation_pipeline.job_creator import log_guard_kwargs, JobCreator, chunk_token, parse_chunk_token
 from simulation_pipeline.datasets import run_card_pipeline
 
 STAGE = "tfb_frames"      # config block; replaced by the optional first CLI argument
@@ -305,6 +305,7 @@ def build(config, card, config_path):
         slurm_mem_per_cpu=str(stage_cfg.get("slurm_mem_per_cpu", config.get("slurm_mem_per_cpu", "2G"))),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         farm_out_dir=config.get("farm_out_dir"),
+        **log_guard_kwargs(config),
     )
     runner.basename_func = basename
     runner.container_script_template = create_container_script_template()

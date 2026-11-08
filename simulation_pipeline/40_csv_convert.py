@@ -53,7 +53,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simulation_pipeline.job_creator import JobCreator, write_top_master_scripts
+from simulation_pipeline.job_creator import log_guard_kwargs, JobCreator, write_top_master_scripts
 from simulation_pipeline.datasets import load_config, load_config_for_card, load_cards
 
 # Converter macros shipped with this repo (a config may point csv_convert_dir
@@ -372,6 +372,7 @@ def build_creator(stage, config, card):
         slurm_tmp_disk=str(config.get("slurm_tmp_disk", "")),
         slurm_mem_per_cpu=str(scfg.get("slurm_mem_per_cpu", config.get("slurm_mem_per_cpu", "2G"))),
         farm_out_dir=config.get("farm_out_dir"),
+        **log_guard_kwargs(config),
     )
     if converter == "eic2ai":
         runner.container_script_template = build_eic2ai_script_template(

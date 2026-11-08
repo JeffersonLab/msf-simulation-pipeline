@@ -12,7 +12,7 @@ import sys
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simulation_pipeline.job_creator import (JobCreator, exension_replacer, chunk_token,
+from simulation_pipeline.job_creator import (log_guard_kwargs, npsim_print_level, JobCreator, exension_replacer, chunk_token,
                                              parse_chunk_token, chunk_basename_func,
                                              chunk_output_func)
 from simulation_pipeline.datasets import run_card_pipeline
@@ -39,7 +39,7 @@ def create_container_script_template():
     if [ -f "/opt/detector/epic-main/bin/thisepic.sh" ]; then
         source /opt/detector/epic-main/bin/thisepic.sh
     fi
-    /usr/bin/time -v npsim --part.userParticleHandler="Geant4TVUserParticleHandler" --compactFile=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml --runType run --hepmc3.useHepMC3 true --inputFiles {input_file} --skipNEvents {skip_events} --outputFile {output_file} --numberOfEvents {events} 2>&1
+    /usr/bin/time -v npsim --part.userParticleHandler="Geant4TVUserParticleHandler" --compactFile=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml --runType run --hepmc3.useHepMC3 true --inputFiles {input_file} --skipNEvents {skip_events} --outputFile {output_file} --printLevel {npsim_print_level} --numberOfEvents {events} 2>&1
 
     echo ""
     echo "=========================================================================="
@@ -82,7 +82,9 @@ def build(config, card, config_path):
         slurm_mem_per_cpu=str(stage_cfg.get("slurm_mem_per_cpu", config.get("slurm_mem_per_cpu", "2G"))),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         farm_out_dir=config.get("farm_out_dir"),
+        **log_guard_kwargs(config),
     )
+    runner.config['npsim_print_level'] = npsim_print_level(config, STAGE)
     runner.basename_func = chunk_basename_func(INPUT_EXTENSIONS)
     runner.container_script_template = create_container_script_template()
     runner.container_script_params_updater = update_params

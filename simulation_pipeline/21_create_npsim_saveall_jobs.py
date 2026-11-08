@@ -11,7 +11,7 @@ import sys
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simulation_pipeline.job_creator import JobCreator, exension_replacer
+from simulation_pipeline.job_creator import log_guard_kwargs, npsim_print_level, JobCreator, exension_replacer
 from simulation_pipeline.datasets import run_card_pipeline
 
 STAGE = "npsim_saveall"
@@ -36,7 +36,7 @@ def create_container_script_template():
     if [ -f "/opt/detector/epic-main/bin/thisepic.sh" ]; then
         source /opt/detector/epic-main/bin/thisepic.sh
     fi
-    /usr/bin/time -v npsim --part.userParticleHandler="" --compactFile=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml --runType run --inputFiles {input_file} --outputFile {output_file} --numberOfEvents {events} 2>&1
+    /usr/bin/time -v npsim --part.userParticleHandler="" --compactFile=$DETECTOR_PATH/epic_craterlake_{beam_config}.xml --runType run --inputFiles {input_file} --outputFile {output_file} --printLevel {npsim_print_level} --numberOfEvents {events} 2>&1
 
     echo ""
     echo "=========================================================================="
@@ -58,7 +58,9 @@ def build(config, card, config_path):
         beam_config=card.get("energy") or card["slug"],
         slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
         farm_out_dir=config.get("farm_out_dir"),
+        **log_guard_kwargs(config),
     )
+    runner.config['npsim_print_level'] = npsim_print_level(config, STAGE)
     runner.container_script_template = create_container_script_template()
     runner.run()
     return runner

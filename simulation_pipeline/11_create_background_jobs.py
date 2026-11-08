@@ -39,7 +39,7 @@ import sys
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simulation_pipeline.job_creator import (JobCreator, chunk_token, parse_chunk_token,
+from simulation_pipeline.job_creator import (log_guard_kwargs, JobCreator, chunk_token, parse_chunk_token,
                                              chunk_basename_func, chunk_output_func)
 from simulation_pipeline.datasets import run_card_pipeline
 
@@ -233,6 +233,7 @@ def build(config, card, config_path):
                                                  config.get("slurm_mem_per_cpu", "2G"))),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         farm_out_dir=config.get("farm_out_dir"),
+        **log_guard_kwargs(config),
     )
     runner.basename_func = chunk_basename_func(SIGNAL_EXTENSIONS)
     runner.container_script_template = create_container_script_template()

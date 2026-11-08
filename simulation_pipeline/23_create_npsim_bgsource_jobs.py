@@ -44,7 +44,7 @@ import sys
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simulation_pipeline.job_creator import JobCreator, write_top_master_scripts
+from simulation_pipeline.job_creator import log_guard_kwargs, npsim_print_level, JobCreator, write_top_master_scripts
 from simulation_pipeline.datasets import load_config, load_config_for_energy
 
 STAGE = "npsim_bgsource"
@@ -145,7 +145,7 @@ def create_container_script_template():
         --random.seed {seed} \\
         --inputFiles {input_file} \\
         --skipNEvents {skip_events} \\
-        --numberOfEvents {events} \\
+        --printLevel {npsim_print_level} --numberOfEvents {events} \\
         --outputFile {output_part} 2>&1
 
     # Written into partial/ (same filesystem, outside every *.edm4hep.root glob),
@@ -218,7 +218,9 @@ def build_source(config, energy, entry, source_cfg, pool_sizes, strip_xrootd):
                                                                config.get("slurm_mem_per_cpu", "2G")))),
         slurm_array_throttle=int(config.get("slurm_array_throttle", 0)),
         farm_out_dir=config.get("farm_out_dir"),
+        **log_guard_kwargs(config),
     )
+    runner.config['npsim_print_level'] = npsim_print_level(config, STAGE)
     runner.basename_func = job_basename
     runner.container_script_template = create_container_script_template()
     runner.container_script_params_updater = update_params

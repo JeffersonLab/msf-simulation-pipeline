@@ -23,7 +23,7 @@ import sys
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simulation_pipeline.job_creator import JobCreator, run_pipeline
+from simulation_pipeline.job_creator import log_guard_kwargs, JobCreator, run_pipeline
 
 CONTAINER_TEMPLATE = textwrap.dedent("""\
     #!/bin/bash
@@ -143,6 +143,7 @@ def process_energy(config, energy, config_path):
                        else config.slurm_time[energy]),
         slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
         farm_out_dir=config.get("farm_out_dir"),
+        **log_guard_kwargs(config),
     )
     runner.container_script_template = CONTAINER_TEMPLATE
     runner.container_script_params_updater = params_updater

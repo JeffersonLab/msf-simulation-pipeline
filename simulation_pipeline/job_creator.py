@@ -125,6 +125,8 @@ class JobCreator:
                                                   # JLab enforces this since 2026-02-17: without the gres a job's
                                                   # per-job /scratch project quota is ~zero and staging fails ENOSPC.
                  farm_out_dir: str = None,        # SLURM stdout/stderr base; default /farm_out/$USER
+                 log_max_mb: float = 10,          # per-file log cap (stdout and stderr each); 0 = no cap
+                 farm_out_budget_gb: float = 20,  # submit refuses if worst-case logs exceed this; 0 = no check
                  ):
         """Initialize JobCreator with configuration."""
         
@@ -177,6 +179,19 @@ class JobCreator:
         # that HAVE that much: farm /scratch sizes vary (8 GB nodes exist)
         # and a too-small node fails the job at its space guard.
         self.config['slurm_tmp_disk'] = str(slurm_tmp_disk or "")
+        # /farm_out and home have small per-user quotas. On 2026-11-07 npsim on
+        # whole 2 us frames printed 3.5 MB of INFO lines per frame (one per
+        # primary vertex); 64 concurrent tasks filled the /farm_out quota in an
+        # hour, every later log write failed and 309 queued tasks died within a
+        # minute each. Three guards follow from that:
+        #  - each file's stdout and stderr are capped at log_max_mb (first part
+        #    kept, then the last 200 lines; the total bytes produced is printed),
+        #  - each array task first writes 1 MB to the log and output dirs and,
+        #    if that fails, holds its own array instead of failing fast,
+        #  - submit_jobs.sh probes the same dirs and refuses to submit when the
+        #    worst-case log volume exceeds farm_out_budget_gb.
+        self.config['log_max_mb'] = float(log_max_mb or 0)
+        self.config['farm_out_budget_gb'] = float(farm_out_budget_gb or 0)
         self.config['beam_config'] = beam_config
 
         # Store output filename function
@@ -206,6 +221,40 @@ class JobCreator:
         self.print_config()
 
 
+    # Shell functions shared by the per-file and the array SLURM templates.
+    # Braces are doubled because the templates go through str.format().
+    #
+    # cap_log: pass the first LOG_MAX_BYTES of a stream, then keep reading (so
+    # the program never sees a broken pipe) but print only the last 200 lines
+    # at the end, plus the number of bytes the program produced.
+    # space_ok: write and remove a 1 MB probe file; fails when the directory's
+    # filesystem or quota is full (NFS quota errors show up at close).
+    SHELL_GUARDS = textwrap.dedent("""\
+        LOG_MAX_BYTES={log_max_bytes}
+        cap_log() {{
+            LC_ALL=C awk -v max="$LOG_MAX_BYTES" -v keep=200 '
+                {{ n += length($0) + 1 }}
+                max == 0 || n <= max {{ print; fflush(); next }}
+                {{ dropped++; ring[dropped % keep] = $0 }}
+                END {{
+                    if (dropped > 0) {{
+                        printf "##### LOG CAP: %d lines dropped after the first %d bytes; the last %d lines follow\\n", dropped, max, (dropped < keep ? dropped : keep)
+                        first = (dropped > keep) ? dropped - keep + 1 : 1
+                        for (i = first; i <= dropped; i++) print ring[i % keep]
+                    }}
+                    if (n > 0) printf "##### LOG BYTES: %d produced\\n", n
+                }}'
+        }}
+        space_ok() {{
+            local probe="$1/.space_probe_${{SLURM_JOB_ID:-$$}}"
+            mkdir -p "$1" 2>/dev/null || return 1
+            if dd if=/dev/zero of="$probe" bs=1M count=1 status=none 2>/dev/null; then
+                rm -f "$probe"; return 0
+            fi
+            rm -f "$probe"; return 1
+        }}
+        """)
+
     def get_default_slurm_template(self) -> str:
         """Default SLURM submission script template."""
         return textwrap.dedent("""\
@@ -219,7 +268,15 @@ class JobCreator:
         #SBATCH --output={log_file}
         #SBATCH --error={err_file}
 
-        set -e
+        set -eo pipefail
+
+        """) + self.SHELL_GUARDS + textwrap.dedent("""
+        for d in "{logs_dir}" "{output_dir}"; do
+            if ! space_ok "$d"; then
+                echo "ABORT: cannot write 1 MB to $d (disk or quota full)" >&2
+                exit 75
+            fi
+        done
 
         # farm_out logs are purged after a few days: gzip-copy them next to the
         # job scripts at exit so failures stay diagnosable. Runs on normal exit
@@ -235,7 +292,7 @@ class JobCreator:
         echo "Starting job for {basename} at $(date)"
         echo "Running on: $(hostname)"
 
-        singularity exec {bindings} {container} {container_script}
+        singularity exec {bindings} {container} {container_script} 2> >(cap_log >&2) | cap_log
 
         echo "Job finished at $(date)"
         """)
@@ -311,6 +368,9 @@ class JobCreator:
             'log_file': os.path.join(self.config['logs_dir'], f"{basename}.slurm.log"),
             'err_file': os.path.join(self.config['logs_dir'], f"{basename}.slurm.err"),
             'saved_logs_dir': self.config['saved_logs_dir'],
+            'logs_dir': self.config['logs_dir'],
+            'output_dir': self.config['output_dir'],
+            'log_max_bytes': int(self.config['log_max_mb'] * 1024 * 1024),
             'container': self.config['container'],
             'container_script': container_script,
             'bindings': bindings,  # Fixed: was 'bind_dir'
@@ -355,6 +415,19 @@ class JobCreator:
         # No `set -e`: one failing file must not abort the rest of the chunk.
         set -uo pipefail
 
+        """) + self.SHELL_GUARDS + textwrap.dedent("""
+        # A full /farm_out or output quota makes every task fail within seconds,
+        # and the scheduler then burns through the whole queue (309 tasks on
+        # 2026-11-07). Probe first; on failure hold the rest of this array so a
+        # person can free space and `scontrol release` it.
+        for d in "{logs_dir}" "{output_dir}"; do
+            if ! space_ok "$d"; then
+                scontrol hold "$SLURM_ARRAY_JOB_ID" 2>/dev/null || true
+                echo "ABORT: cannot write 1 MB to $d (disk or quota full); array $SLURM_ARRAY_JOB_ID put on hold" >&2
+                exit 75
+            fi
+        done
+
         # farm_out logs are purged after a few days: gzip-copy this task's
         # log/err next to the job scripts at exit (normal end, walltime TERM,
         # scancel; only SIGKILL leaves no copy).
@@ -392,13 +465,15 @@ class JobCreator:
             echo ""
             echo ">>>>> START  line $LINE  $CONTAINER_SCRIPT  ($(date +%H:%M:%S))"
             file_t0=$SECONDS
-            if singularity exec {bindings} {container} "$CONTAINER_SCRIPT"; then
+            singularity exec {bindings} {container} "$CONTAINER_SCRIPT" 2> >(cap_log >&2) | cap_log
+            rc=${{PIPESTATUS[0]}}
+            if [ "$rc" -eq 0 ]; then
                 n_ok=$((n_ok + 1))
                 echo "<<<<< OK     line $LINE  ($((SECONDS - file_t0))s)"
             else
                 n_fail=$((n_fail + 1))
                 failed+=("$CONTAINER_SCRIPT")
-                echo "<<<<< FAIL   line $LINE  ($((SECONDS - file_t0))s)  -- see log above"
+                echo "<<<<< FAIL   line $LINE  exit $rc  ($((SECONDS - file_t0))s)  -- see log above"
             fi
         done
 
@@ -443,6 +518,8 @@ class JobCreator:
                           if self.config['slurm_tmp_disk'] else "",
             job_name=self.config['beam_config'] or 'jobs',
             logs_dir=self.config['logs_dir'],
+            output_dir=self.config['output_dir'],
+            log_max_bytes=int(self.config['log_max_mb'] * 1024 * 1024),
             saved_logs_dir=self.config['saved_logs_dir'],
             list_file=list_file,
             bindings=bindings,
@@ -455,6 +532,49 @@ class JobCreator:
             f.write(content)
         os.chmod(script_path, 0o755)
         return script_path
+
+    def submit_guard_lines(self, n_tasks: int) -> List[str]:
+        """Shell lines that stop a submission which would fill /farm_out.
+
+        1. Write 1 MB to the log dir and the output dir; refuse if either fails.
+           Warn (do not refuse) when the home directory is full.
+        2. Worst-case log volume = tasks x files per task x 2 streams x cap.
+           Refuse above farm_out_budget_gb unless FORCE_LOG_BUDGET=1.
+        """
+        cap_mb = self.config['log_max_mb']
+        budget_gb = self.config['farm_out_budget_gb']
+        files = n_tasks * self.config['slurm_files_per_job']
+        lines = [
+            "space_ok() {",
+            "    local probe=\"$1/.space_probe_$$\"",
+            "    mkdir -p \"$1\" 2>/dev/null || return 1",
+            "    if dd if=/dev/zero of=\"$probe\" bs=1M count=1 status=none 2>/dev/null; then rm -f \"$probe\"; return 0; fi",
+            "    rm -f \"$probe\"; return 1",
+            "}",
+            f"for d in \"{self.config['logs_dir']}\" \"{self.config['output_dir']}\"; do",
+            "    if ! space_ok \"$d\"; then",
+            "        echo \"REFUSING TO SUBMIT: cannot write 1 MB to $d (disk or quota full). Free space first.\" >&2",
+            "        exit 2",
+            "    fi",
+            "done",
+            "space_ok \"$HOME\" || echo \"WARNING: home directory $HOME is full (jobs do not need it, but the admins will ask)\" >&2",
+        ]
+        if cap_mb > 0 and budget_gb > 0:
+            worst_gb = files * 2 * cap_mb / 1024
+            lines += [
+                f"# worst-case logs: {files} files x 2 streams x {cap_mb:g} MB cap = {worst_gb:.2f} GB "
+                f"(budget farm_out_budget_gb = {budget_gb:g} GB)",
+            ]
+            if worst_gb > budget_gb:
+                lines += [
+                    "if [ \"${FORCE_LOG_BUDGET:-0}\" != 1 ]; then",
+                    f"    echo \"REFUSING TO SUBMIT: worst-case logs {worst_gb:.2f} GB exceed the /farm_out budget "
+                    f"of {budget_gb:g} GB. Lower slurm_log_max_mb, raise farm_out_budget_gb after checking the "
+                    f"quota, or rerun with FORCE_LOG_BUDGET=1.\" >&2",
+                    "    exit 2",
+                    "fi",
+                ]
+        return lines + [""]
 
     def write_submit_all_script(self):
         """Write the submit script for THIS dataset's jobs (one energy/beam config).
@@ -494,8 +614,9 @@ class JobCreator:
             f"echo \"Submitting dataset '{dataset}' ({n_files} files, {n_tasks} array tasks)\"",
             f"echo \"  output: {self.config['output_dir']}\"",
             f"echo \"  logs:   {self.config['logs_dir']}\"",
-            ""
+            "",
         ]
+        script_lines += self.submit_guard_lines(n_tasks)
         throttle = self.config['slurm_array_throttle']
         throttle_spec = f"%{throttle}" if throttle else ""
         for offset in range(0, n_tasks, chunk):
@@ -827,6 +948,33 @@ def write_top_master_scripts(creators, top_dir=None):
     print("=" * 80)
 
     return submit_path, run_path
+
+
+def log_guard_kwargs(config):
+    """JobCreator kwargs for the log cap and the /farm_out budget, from the config.
+
+    slurm_log_max_mb (default 10): per-file cap on stdout and on stderr. Normal
+    logs are 0-2 MB; the 2026-11-07 runaway logs were 3.5 MB per frame.
+    farm_out_budget_gb (default 20): submit_jobs.sh refuses a dataset whose
+    worst-case log volume exceeds it.
+    """
+    return {
+        "log_max_mb": float(config.get("slurm_log_max_mb", 10)),
+        "farm_out_budget_gb": float(config.get("farm_out_budget_gb", 20)),
+    }
+
+
+def npsim_print_level(config, stage=None):
+    """DD4hep print level for npsim (`--printLevel`).
+
+    `<stage>.npsim_print_level`, else `npsim_print_level`, else WARNING. At
+    INFO npsim prints one PrimaryHandler line per primary vertex and one
+    createG4Primary line per rounded photon: 3.5 MB per merged 2 us frame
+    (26,560 + 6,860 lines, measured 2026-11-07). WARNING keeps errors and the
+    run summary.
+    """
+    stage_cfg = (config.get(stage) or {}) if stage else {}
+    return str(stage_cfg.get("npsim_print_level", config.get("npsim_print_level", "WARNING")))
 
 
 def exension_replacer(from_ext, to_ext):

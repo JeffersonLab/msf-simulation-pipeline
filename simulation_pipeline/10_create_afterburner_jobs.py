@@ -12,7 +12,7 @@ import sys
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simulation_pipeline.job_creator import JobCreator, exension_replacer
+from simulation_pipeline.job_creator import log_guard_kwargs, JobCreator, exension_replacer
 from simulation_pipeline.datasets import run_card_pipeline
 
 STAGE = "afterburner"
@@ -69,6 +69,7 @@ def build(config, card, config_path):
         container=config['container'],
         slurm_mem_per_cpu=str(config.get("slurm_mem_per_cpu", "2G")),
         farm_out_dir=config.get("farm_out_dir"),
+        **log_guard_kwargs(config),
     )
     runner.container_script_params_updater = update_params
     runner.container_script_template = create_container_script_template()
